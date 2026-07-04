@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mic Calibration Upload</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+    <script>
+        function setStatus(message, isError = false) {
+            const el = document.getElementById("calStatusMsg");
+            el.textContent = message || "";
+            el.style.color = isError ? "#ff4b4b" : "";
+        }
+
+        function fileChosen() {
+            const f = document.getElementById("calfile").files[0];
+            if (!f) return;
+            setStatus("Selected: " + f.name + " (" + (f.size / 1024).toFixed(1) + " KB)");
+        }
+
+        function uploadCal() {
+            const input = document.getElementById("calfile");
+            const f = input.files[0];
+            if (!f) {
+                alert("⚠️ Choose a calibration file first!");
+                return;
+            }
+            if (f.size > 128 * 1024) {
+                setStatus("File is larger than 128 KB — that is not a calibration file.", true);
+                return;
+            }
+            setStatus("Uploading " + f.name + "...");
+            fetch("/uploadCal?name=" + encodeURIComponent(f.name), {
+                method: "POST",
+                headers: { "Content-Type": "application/octet-stream" },
+                body: f
+            }).then(async r => {
+                const text = await r.text();
+                if (!r.ok) throw new Error(text);
+                const data = JSON.parse(text);
+                setStatus("✅ Uploaded and applied: " + data.file +
+                          " (" + data.points + " correction points). " +
+                          "It is saved to the SD card and will be restored at every boot.");
+            }).catch(err => {
+                setStatus("Upload failed: " + err.message, true);
+            });
+        }
+    </script>
+</head>
+<body>
+    <div class="wifi-setup-container">
+        <h1>🎤 Mic Calibration Upload</h1>
+        <p>Upload your microphone's calibration file. For a miniDSP UMIK-1,
+           download the unique file for your mic from
+           <strong>minidsp.com</strong> by entering its serial number —
+           use the plain <strong>0°</strong> version. Accepted:
+           .txt / .csv / .cal with ascending "frequency&nbsp;dB" lines.</p>
+
+        <label><strong>Calibration file:</strong></label>
+        <input type="file" id="calfile" accept=".txt,.csv,.cal" onchange="fileChosen()">
+
+        <button class="button btn-save" title="Upload, validate and apply the calibration."
+                onclick="uploadCal()">⬆️ Upload &amp; Apply</button>
+        <a class="button btn-info" href="/" style="display:inline-block;">🏠 Home</a>
+
+        <div class="flash-stats" id="calStatusMsg" style="margin-top: 12px;"></div>
+
+        <footer>
+            <p class="disclaimer">ESP32-P4 Spectrum Analyzer</p>
+        </footer>
+    </div>
+</body>
+</html>

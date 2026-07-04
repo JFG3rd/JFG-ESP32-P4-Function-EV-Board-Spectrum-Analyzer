@@ -22,6 +22,9 @@ idf_component_register(
         settings_mgr
         nvs_flash
         esp_event
+        esp_netif
         esp_timer
         app_update
+        net_mgr
+        web_server
 )

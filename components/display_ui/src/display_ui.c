@@ -148,6 +148,11 @@ void display_ui_set_cal_file(const char *name)
     strlcpy(s_last_cal_file, name ? name : "", sizeof(s_last_cal_file));
 }
 
+void display_ui_apply_cal_file(const char *name)
+{
+    screen_settings_set_cal_file(name);   /* updates UI, enables, persists */
+}
+
 void display_ui_set_ambient_margin(float margin)
 {
     if (margin < 1.0f) margin = 1.0f;

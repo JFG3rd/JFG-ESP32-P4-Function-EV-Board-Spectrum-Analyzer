@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Spectrum Analyzer</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+    <script>
+        function loadStatus() {
+            fetch("/api/status")
+                .then(r => r.json())
+                .then(s => {
+                    document.getElementById("status").textContent =
+                        "v" + s.version + " · " + s.network + " · " + s.source +
+                        (s.cal_loaded ? " · mic cal active" : "");
+                })
+                .catch(() => {});
+        }
+        document.addEventListener("DOMContentLoaded", loadStatus);
+    </script>
+</head>
+<body>
+    <div class="wifi-setup-container">
+        <h1>🎵 Spectrum Analyzer</h1>
+        <p>ESP32-P4 Real-Time Audio Spectrum Analyzer</p>
+
+        <a class="button btn-info" href="/wifi-setup.html"
+           style="display:block; margin: 10px 0;">📶 WiFi Setup</a>
+        <a class="button btn-save" href="/cal-upload.html"
+           style="display:block; margin: 10px 0;">🎤 Upload Mic Calibration</a>
+
+        <div class="flash-stats" id="status" style="margin-top: 16px;"></div>
+
+        <footer>
+            <p class="disclaimer">ESP32-P4 Spectrum Analyzer</p>
+        </footer>
+    </div>
+</body>
+</html>

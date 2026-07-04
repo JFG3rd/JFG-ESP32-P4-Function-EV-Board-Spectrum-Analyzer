@@ -23,6 +23,7 @@ idf_component_register(
         dsp_engine
         audio_source
         settings_mgr
+        net_mgr
         esp_hw_support
         esp_lcd
         esp_lcd_ek79007

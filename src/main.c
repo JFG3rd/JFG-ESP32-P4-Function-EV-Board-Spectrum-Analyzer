@@ -18,10 +18,15 @@
 #include "esp_err.h"
 #include "esp_ota_ops.h"
 
+#include "esp_netif.h"
+#include "esp_event.h"
+
 #include "audio_source.h"
 #include "dsp_engine.h"
 #include "display_ui.h"
 #include "settings_mgr.h"
+#include "net_mgr.h"
+#include "web_server.h"
 
 static const char *TAG = "main";
 
@@ -75,6 +80,10 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    /* Networking plumbing (needed by WiFi/net_mgr later in boot) */
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
 
     /* 2. Settings manager: mount SD if present, prepare NVS fallback */
     ESP_LOGI(TAG, "Step 2: settings_mgr_init");
@@ -138,6 +147,15 @@ void app_main(void)
     /* 7. Start audio capture */
     ESP_LOGI(TAG, "Step 7: audio_source_start");
     ESP_ERROR_CHECK(audio_source_start());
+
+    /* 8. WiFi (setup AP or join saved network) + web server.
+     * Non-fatal: the analyzer is fully functional without the network. */
+    ESP_LOGI(TAG, "Step 8: net_mgr + web server");
+    if (net_mgr_init() == ESP_OK) {
+        web_server_start();
+    } else {
+        ESP_LOGW(TAG, "WiFi unavailable — continuing without network");
+    }
 
     /* Everything initialized and running — accept this firmware image.
      * No-op until OTA rollback is enabled (Phase 2 M6), but establishes

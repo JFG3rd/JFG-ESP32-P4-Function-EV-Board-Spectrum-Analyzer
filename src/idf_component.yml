@@ -35,11 +35,13 @@ dependencies:
   espressif/mdns:
     version: "^1"
 
-  ## Phase 2: WiFi via ESP32-C5 companion chip (uncomment when ready)
-  # espressif/esp_wifi_remote:
-  #   version: "^0"
-  # espressif/esp_hosted:
-  #   version: "^0"
+  ## Phase 2 M3: WiFi via the on-board ESP32-C6 companion chip (SDIO).
+  ## The C6 ships pre-flashed with the ESP-Hosted slave firmware; the
+  ## esp_wifi_remote component proxies the standard esp_wifi API to it.
+  espressif/esp_wifi_remote:
+    version: "*"
+  espressif/esp_hosted:
+    version: "*"
 
   ## Official ES8311 codec driver — see note above.
   espressif/es8311:

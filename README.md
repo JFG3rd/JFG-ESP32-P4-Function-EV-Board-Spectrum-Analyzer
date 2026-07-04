@@ -36,19 +36,40 @@ Analog Mic ──► ES8311 ──► I2S DMA ──► DSP Engine ──► LVG
 
 ## Roadmap (Phase 2)
 
-- ✅ **USB Audio Class (UAC1)** microphone as primary source (NAD/Dirac UMIK-1 + generic UAC1), hot-swap with fallback to I2S — calibration-file upload still pending
-- **WiFi** via ESP32-C6 companion chip (SDIO) — **provisioning portal**: device starts a
-  WPA2 setup AP, serves a WiFi setup page (scan for local SSIDs, de-duplicated by
-  strongest signal, pick or type one, enter password), then joins the local WLAN as a
-  station; falls back to the setup AP when the join fails. Portal page adapted from
-  [HomeKitKnock-S3](https://github.com/JFG3rd/HomeKitKnock-S3) (see `web/`)
-- **WebSocket web UI** — live spectrum stream at 192.168.4.1
+- ✅ **USB Audio Class (UAC1)** microphone as primary source (NAD/Dirac UMIK-1 + generic UAC1), hot-swap with fallback to I2S
+- ✅ **WiFi** via the on-board ESP32-C6 (esp-hosted over SDIO) — **provisioning portal**:
+  device starts a WPA2 setup AP (`SpectrumAnalyzer-XXXX`, per-device password shown on
+  the Settings screen), serves a setup page (SSID scan de-duplicated by strongest
+  signal, manual entry for hidden networks), joins the local WLAN as a station, and
+  falls back to the setup AP when the join fails; mDNS `spectrumanalyzer.local`.
+  Portal page adapted from [HomeKitKnock-S3](https://github.com/JFG3rd/HomeKitKnock-S3)
+- ✅ **Calibration files** — UMIK-1 .txt / generic CSV, per-bin log-frequency interpolated
+  correction applied after the FFT; load from SD or **upload from the browser**
+  (`/cal-upload.html`, validated before it replaces anything)
+- **WebSocket web UI** — live spectrum stream in the browser
 - **REST API** — GET/PUT config, OTA firmware update, CSV export
-- ✅ **Calibration files** — UMIK-1 .txt / generic CSV from SD card, per-bin log-frequency
-  interpolated correction applied after the FFT (upload via REST comes with M4)
 - **SD card** — continuous recording and CSV spectrum exports
 - **mDNS** — `spectrumanalyzer.local` service discovery
 - **GitHub Actions CI** — ESP-IDF 5.5 build + host-side unit tests
+
+### Web Interface
+
+The device runs an HTTP server in both setup-AP mode (`http://192.168.4.1`) and
+station mode (`http://spectrumanalyzer.local` / device IP):
+
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/` | GET | Home page: navigation + live status |
+| `/wifi-setup.html` | GET | Provisioning portal (scan / join) |
+| `/scanWifi` | GET | Start async SSID scan |
+| `/wifiScanResults` | GET | `{"ssids":[...],"inProgress":bool}` — de-duplicated, RSSI-sorted |
+| `/saveWiFi` | POST | `{"ssid","password"}` (≤256 B) → NVS, reboot into STA join |
+| `/cal-upload.html` | GET | Mic calibration upload page |
+| `/uploadCal?name=x.txt` | POST | Raw file body ≤128 KB → validated by the cal parser, saved to `/sdcard/spectrum/cal/`, applied + persisted |
+| `/api/status` | GET | JSON: version, network, audio source, cal state, heap |
+
+Setup AP: `SpectrumAnalyzer-XXXX`, WPA2, per-device password `SA-xxxxxxxx`
+(derived from the eFuse MAC, shown on the on-device Settings screen).
 
 ### Security Notes (Phase 2 requirements)
 
@@ -60,11 +81,12 @@ buffers at the maximum size so config changes can never overflow them.
 Phase 2 grows the attack surface considerably and must follow the same rule
 — every external input is hostile until proven otherwise:
 
-- **Calibration-file upload (USB/REST):** enforce a max file size and row
-  count before parsing; validate every float with `isfinite()`; never trust
-  length fields inside the file; fuzz the CSV/JSON parser host-side.
-- **WiFi AP:** WPA2 with a per-device generated password — never an open AP;
-  no debug/telnet endpoints in release builds.
+- ✅ **Calibration-file upload:** max file size (128 KB) and row count (2048)
+  enforced before parsing; every float `isfinite()`-checked; frequencies must
+  ascend; a rejected upload is deleted and never replaces the active file.
+  Host-side parser fuzzing still to do (M8 CI).
+- ✅ **WiFi AP:** WPA2 with a per-device generated password — never open;
+  credentials stored in NVS, never in `settings.json` on the SD card.
 - **REST API:** rate-limit; reuse `settings_sanitize()` for any config PUT;
   reject oversized bodies before buffering.
 - **OTA:** signed firmware images only (`CONFIG_SECURE_SIGNED_APPS_*`) with
@@ -86,7 +108,9 @@ Phase 2 grows the attack surface considerably and must follow the same rule
 | Display | EK79007 1024×600 IPS, MIPI DSI 2-lane |
 | Touch | GT911 capacitive (I2C) |
 | Audio codec | ES8311 (I2C control + I2S audio) |
-| USB | USB-OTG port (Type-C) |
+| WiFi/BT | ESP32-C6-MINI-1 via SDIO — ships pre-flashed with the ESP-Hosted slave firmware ([board guide](https://github.com/espressif/esp-hosted-mcu/blob/main/docs/esp32_p4_function_ev_board.md)); a large host↔slave version gap may require a slave OTA update |
+| USB host | USB-A port (P4 USB-OTG HS) — USB microphone goes here |
+| USB debug | USB-C port (USB-Serial-JTAG) — flashing + serial monitor |
 | SD card | SDIO slot |
 
 ### ES8311 Audio Codec — GPIO Pinout
@@ -150,7 +174,13 @@ components/
 │
 ├── settings_mgr/        # Persistence: SD card JSON + NVS blob fallback
 │   ├── include/settings_mgr.h
-│   └── src/settings_mgr.c   # settings.json, named presets, noise floor binary
+│   └── src/settings_mgr.c   # settings.json, named presets, cal files, noise floor
+│
+├── net_mgr/             # WiFi via esp-hosted/esp_wifi_remote (on-board ESP32-C6)
+│   └── src/net_mgr.c        # STA join w/ AP fallback, SSID scan+dedup, NVS creds, mDNS
+│
+├── web_server/          # esp_http_server: portal, cal upload, status API
+│   └── src/web_server.c     # assets baked from web/ by tools/gen_web_assets.py
 │
 └── display_ui/          # LVGL screens + hardware init
     ├── include/display_ui.h
@@ -163,6 +193,9 @@ components/
 
 src/
 └── main.c               # Thin dispatcher: init → restore settings → start
+
+web/                     # Web page sources (baked into firmware — edit these,
+                         # then run tools/gen_web_assets.py)
 ```
 
 ### Data Types (`components/dsp_engine/include/dsp_engine.h`)

@@ -272,11 +272,17 @@ Flip the switch on and the **◉ Ambient NF live** indicator appears in the stat
 
 Measurement mics like the miniDSP UMIK-1 ship with a unique calibration file (download it from minidsp.com by entering the mic's serial number — use the plain 0° version). The file lists how many dB the mic deviates from flat at each frequency; the analyzer subtracts that deviation from every FFT bin.
 
-**Setup:**
+**Setup — from your browser (easiest):**
+1. Make sure the analyzer is on your WiFi (see *WiFi & Web Access*)
+2. Open **http://spectrumanalyzer.local/cal-upload.html** (or use the analyzer's IP)
+3. Choose the calibration file and tap **Upload & Apply** — it is validated, written to the SD card, applied immediately, and restored at every boot. The page confirms with the number of correction points.
+
+**Setup — manual SD card copy (alternative):**
 1. On a computer, copy the calibration file (`.txt`, `.csv`, or `.cal`) to the SD card folder `/spectrum/cal/`
 2. Insert the card, go to Settings → **MIC CALIBRATION** → **Load File**
 3. Pick the file and tap **Load** — it's applied immediately, switched On, and remembered across power cycles
-4. **Mic Cal: Off/On** toggles the correction without unloading the file; **Clear** forgets it
+
+**Mic Cal: Off/On** toggles the correction without unloading the file; **Clear** forgets it.
 
 The status line shows the loaded file and how many correction points it contains. The correction adapts automatically when you change FFT size or when the sample rate changes (USB vs. built-in mic). Invalid or corrupted files are rejected safely.
 
@@ -329,6 +335,38 @@ The noise floor calibration data is saved separately as `/sdcard/spectrum/noise_
 
 ---
 
+## WiFi & Web Access
+
+The analyzer has WiFi (through the board's built-in ESP32-C6 radio chip) and a small built-in website for setup and file transfer.
+
+### First-time WiFi setup
+
+1. Power the analyzer on. With no WiFi configured, it starts its own hotspot named **SpectrumAnalyzer-XXXX** (XXXX is unique to your device).
+2. Open **Settings** on the analyzer — the bottom-left **WiFi status line** shows the hotspot name, its password (format `SA-xxxxxxxx`), and the address `http://192.168.4.1`.
+3. On your phone or computer, join that hotspot using the password shown.
+4. Open a browser and go to **http://192.168.4.1** → tap **WiFi Setup**.
+5. The page scans for nearby networks. Each network appears **once** (even if you have several access points broadcasting the same name), sorted by signal strength. Pick yours — or type a hidden SSID manually — enter its password, and tap **Save & Connect**.
+6. The analyzer reboots and joins your network. The Settings WiFi status line now shows the network name and the analyzer's IP address, e.g. `WiFi: MyNetwork 192.168.1.57`.
+
+From then on, reach the analyzer from any device on your network at:
+- **http://spectrumanalyzer.local** (Mac/iPhone and most modern systems), or
+- the IP address shown in Settings.
+
+### Changing networks / reprovisioning
+
+Open `http://<analyzer>/wifi-setup.html` at any time to pick a different network. If the analyzer can't join the saved network (wrong password, network gone), it automatically falls back to its own **SpectrumAnalyzer-XXXX** hotspot after a few attempts so you can reconfigure it.
+
+### The built-in web pages
+
+| Page | What it does |
+|------|--------------|
+| `/` | Home — links to the pages below plus firmware/network status |
+| `/wifi-setup.html` | Network scan + join (described above) |
+| `/cal-upload.html` | Upload a microphone calibration file (see Mic Calibration) |
+| `/api/status` | Machine-readable status (JSON) |
+
+---
+
 ## Recommended Presets
 
 | Use case | FFT | Window | Averaging | Overlap | Mic Gain |
@@ -364,3 +402,12 @@ The noise floor calibration data is saved separately as `/sdcard/spectrum/noise_
 
 **Captured noise floor went bad (room changed, or mic gain changed)**
 → Go to Settings → Clear → re-capture in the new quiet conditions.
+
+**The SpectrumAnalyzer hotspot doesn't appear**
+→ The WiFi radio lives on the board's ESP32-C6 companion chip. If the serial log shows `esp_hosted_init failed`, the C6's ESP-Hosted firmware may be missing or incompatible — see the esp-hosted board guide for updating it. The analyzer itself keeps working without WiFi.
+
+**Calibration upload rejected**
+→ The file must be under 128 KB, contain at most 2048 "frequency dB" lines with strictly rising frequencies, and end in .txt/.csv/.cal. Re-download the file from minidsp.com if in doubt.
+
+**Can't reach spectrumanalyzer.local**
+→ Some networks/devices don't resolve mDNS names. Use the IP address shown on the analyzer's Settings screen instead.

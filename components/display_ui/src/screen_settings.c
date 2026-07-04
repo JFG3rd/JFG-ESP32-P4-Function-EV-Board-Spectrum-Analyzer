@@ -11,6 +11,7 @@
 #include "dsp_engine.h"
 #include "settings_mgr.h"
 #include "display_ui.h"
+#include "net_mgr.h"
 #include "screen_settings.h"
 #include "screen_spectrum.h"
 #include "screen_file_dialog.h"
@@ -48,6 +49,7 @@ static lv_obj_t *s_dd_disp_mode;
 static lv_obj_t *s_dd_amb_strength;
 static lv_obj_t *s_dd_cal_enable;
 static lv_obj_t *s_lbl_cal_status;
+static lv_obj_t *s_lbl_wifi_status;
 static char      s_cal_file_name[32] = "";
 static lv_obj_t *s_dd_fft;
 static lv_obj_t *s_dd_window;
@@ -602,6 +604,13 @@ esp_err_t screen_settings_create(settings_changed_cb_t cb, void *ctx,
 
 #undef MAKE_CAL_BTN
 
+    /* WiFi status — AP name+password while provisioning, SSID+IP when joined */
+    s_lbl_wifi_status = lv_label_create(s_screen);
+    lv_label_set_text(s_lbl_wifi_status, "WiFi: ...");
+    lv_obj_set_style_text_color(s_lbl_wifi_status, lv_color_hex(0x88AACC), 0);
+    lv_obj_set_style_text_font(s_lbl_wifi_status, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(s_lbl_wifi_status, 20, 518);
+
     /* Back button — applies all pending changes, spans the first column */
     lv_obj_t *back_btn = lv_button_create(s_screen);
     lv_obj_set_size(back_btn, 360, 40);
@@ -736,5 +745,10 @@ void screen_settings_load(void)
                           settings_mgr_sd_available() ? "SD: Ready" : "SD: Not found (NVS backup)");
     }
     update_cal_status_label();
+    if (s_lbl_wifi_status) {
+        char net[96];
+        net_mgr_get_status(net, sizeof(net));
+        lv_label_set_text(s_lbl_wifi_status, net);
+    }
     lv_screen_load(s_screen);
 }
