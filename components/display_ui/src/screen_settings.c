@@ -33,6 +33,7 @@ static const char *peak_decay_opts  = "Very Slow\nSlow\nMedium\nFast\nVery Fast"
 static const char *db_range_opts    = "120 dB\n100 dB\n80 dB\n60 dB";
 /* order must match display_mode_t in settings_mgr.h */
 static const char *disp_mode_opts   = "Bars\nLine\n1/3 Octave\nPersistence\nWaterfall\nScope\nVU Meter\nMirror";
+static const char *amb_strength_opts = "Gentle\nMedium\nStrong";
 static const char *fft_size_opts  = "512\n1024\n2048\n4096\n8192\n16384";
 static const char *window_opts    = "Rectangular\nHann\nHamming\nBlackman\nBlackman-Harris\nFlat Top\nKaiser";
 static const char *avg_opts       = "Exponential\nRMS\nPeak Hold\nMax Hold";
@@ -44,6 +45,7 @@ static lv_obj_t *s_dd_bar_decay;
 static lv_obj_t *s_dd_peak_decay;
 static lv_obj_t *s_dd_db_range;
 static lv_obj_t *s_dd_disp_mode;
+static lv_obj_t *s_dd_amb_strength;
 static lv_obj_t *s_dd_fft;
 static lv_obj_t *s_dd_window;
 static lv_obj_t *s_dd_avg;
@@ -170,6 +172,20 @@ static uint16_t peak_decay_rate_to_index(float rate)
     return 4;
 }
 
+static float amb_strength_index_to_margin(uint16_t idx)
+{
+    static const float margins[] = {1.1f, 1.5f, 2.5f};
+    if (idx >= 3) idx = 1;
+    return margins[idx];
+}
+
+static uint16_t amb_margin_to_index(float margin)
+{
+    if (margin <= 1.25f) return 0;
+    if (margin <= 1.9f)  return 1;
+    return 2;
+}
+
 static int db_range_index_to_db(uint16_t idx)
 {
     static const int ranges[] = {120, 100, 80, 60};
@@ -206,6 +222,7 @@ static void apply_settings(void)
     display_ui_set_peak_decay(peak_decay_index_to_rate(lv_dropdown_get_selected(s_dd_peak_decay)));
     display_ui_set_db_range(db_range_index_to_db(lv_dropdown_get_selected(s_dd_db_range)));
     display_ui_set_display_mode((int)lv_dropdown_get_selected(s_dd_disp_mode));
+    display_ui_set_ambient_margin(amb_strength_index_to_margin(lv_dropdown_get_selected(s_dd_amb_strength)));
 
     read_dsp_widgets(&s_cur_cfg, &s_cur_gain_db);
 
@@ -429,6 +446,19 @@ esp_err_t screen_settings_create(settings_changed_cb_t cb, void *ctx,
     lv_dropdown_set_options(s_dd_disp_mode, disp_mode_opts);
     lv_obj_set_size(s_dd_disp_mode, 200, 36);
     lv_obj_set_pos(s_dd_disp_mode, 700, 228);
+
+    /* Ambient subtraction strength — how aggressively the rolling ambient
+     * estimate is subtracted (matters most with acoustic room noise) */
+    lv_obj_t *as_lbl = lv_label_create(s_screen);
+    lv_label_set_text(as_lbl, "Ambient Strength:");
+    lv_obj_set_style_text_color(as_lbl, lv_color_hex(0xCCDDEE), 0);
+    lv_obj_set_style_text_font(as_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(as_lbl, 540, 282);
+
+    s_dd_amb_strength = lv_dropdown_create(s_screen);
+    lv_dropdown_set_options(s_dd_amb_strength, amb_strength_opts);
+    lv_obj_set_size(s_dd_amb_strength, 200, 36);
+    lv_obj_set_pos(s_dd_amb_strength, 700, 276);
     s_dd_fft     = make_labeled_dropdown(s_screen, "FFT size:",     fft_size_opts,  90);
     s_dd_window  = make_labeled_dropdown(s_screen, "Window:",       window_opts,   135);
     s_dd_avg     = make_labeled_dropdown(s_screen, "Averaging:",    avg_opts,      180);
@@ -468,6 +498,7 @@ esp_err_t screen_settings_create(settings_changed_cb_t cb, void *ctx,
     lv_dropdown_set_selected(s_dd_peak_decay,   2);  /* Medium = 0.25 dB/frame */
     lv_dropdown_set_selected(s_dd_db_range,     0);  /* 120 dB (full range) */
     lv_dropdown_set_selected(s_dd_disp_mode,    DISPLAY_MODE_BARS);
+    lv_dropdown_set_selected(s_dd_amb_strength, 1);  /* Medium = 1.5x */
     lv_dropdown_set_selected(s_dd_fft,          fft_size_to_index((uint32_t)s_cur_cfg.fft_size));
     lv_dropdown_set_selected(s_dd_window,       (uint16_t)s_cur_cfg.window);
     lv_dropdown_set_selected(s_dd_avg,          (uint16_t)s_cur_cfg.averaging);
@@ -544,6 +575,7 @@ void screen_settings_collect(settings_t *out)
     out->screen_brightness       = (int)lv_slider_get_value(s_slider_brightness);
     out->db_range                = db_range_index_to_db(lv_dropdown_get_selected(s_dd_db_range));
     out->display_mode            = (int)lv_dropdown_get_selected(s_dd_disp_mode);
+    out->ambient_margin          = amb_strength_index_to_margin(lv_dropdown_get_selected(s_dd_amb_strength));
 }
 
 /* Update every widget + s_cur_cfg from cfg WITHOUT firing the changed
@@ -568,6 +600,7 @@ void screen_settings_sync_from(const settings_t *cfg)
     lv_dropdown_set_selected(s_dd_disp_mode,
         (cfg->display_mode >= 0 && cfg->display_mode < DISPLAY_MODE_COUNT)
             ? (uint16_t)cfg->display_mode : DISPLAY_MODE_BARS);
+    lv_dropdown_set_selected(s_dd_amb_strength, amb_margin_to_index(cfg->ambient_margin));
 
     if (cfg->ambient_noise_enabled) lv_obj_add_state(s_sw_ambient, LV_STATE_CHECKED);
     else                            lv_obj_remove_state(s_sw_ambient, LV_STATE_CHECKED);

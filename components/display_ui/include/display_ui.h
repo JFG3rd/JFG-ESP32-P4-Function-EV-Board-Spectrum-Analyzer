@@ -51,6 +51,9 @@ void      display_ui_set_db_range(int range_db);
 /* Switch the spectrum display mode (display_mode_t). */
 void      display_ui_set_display_mode(int mode);
 
+/* Ambient subtraction strength (margin x estimate, 1.0-4.0). */
+void      display_ui_set_ambient_margin(float margin);
+
 /* Feed raw audio samples to the oscilloscope view (no-op unless active).
  * Safe to call from the audio reader task. */
 void      display_ui_push_waveform(const int16_t *samples, size_t count);

@@ -98,6 +98,7 @@ void app_main(void)
     display_ui_set_brightness(loaded.screen_brightness);           /* restore LCD brightness    */
     display_ui_set_db_range(loaded.db_range);                      /* restore display dB range  */
     display_ui_set_display_mode(loaded.display_mode);              /* restore display mode      */
+    display_ui_set_ambient_margin(loaded.ambient_margin);         /* restore ambient strength  */
     display_ui_sync_settings(&loaded);   /* sync settings-screen widgets so Back won't revert */
     display_ui_unlock();
 

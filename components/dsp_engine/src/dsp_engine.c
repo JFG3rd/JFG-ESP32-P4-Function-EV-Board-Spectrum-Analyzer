@@ -78,10 +78,17 @@ static uint32_t  s_noise_capture_count;
  * transient loud signals don't inflate the estimate. */
 static float    *s_ambient_power;          /* PSRAM [bin_count] — rolling linear power */
 static volatile bool s_ambient_active;
-static float     s_ambient_margin  = 1.1f; /* subtract margin × estimate              */
+static float     s_ambient_margin  = 1.5f; /* subtract margin × estimate              */
 static volatile bool s_ambient_needs_init; /* warm-start estimate on first active frame */
 #define AMBIENT_ALPHA_DOWN  0.15f           /* convergence speed when cur < estimate   */
-#define AMBIENT_ALPHA_UP    0.003f          /* ~5 s time constant for upward drift     */
+#define AMBIENT_ALPHA_NEAR  0.05f           /* cur within +6 dB of estimate: still noise
+                                             * fluctuation — track toward the MEAN.
+                                             * Without this tier the estimator latched
+                                             * onto the noise minimum (fast down, slow
+                                             * up), which under-subtracted fluctuating
+                                             * acoustic noise from USB measurement mics */
+#define AMBIENT_ALPHA_UP    0.003f          /* far above estimate: real signal — barely learn */
+#define AMBIENT_NEAR_FACTOR 4.0f            /* +6 dB boundary between the two up-rates  */
 #define NOISE_CAPTURE_FRAMES  120U      /* ~5 s at 4096 FFT / 50% OVL / 48 kHz */
 #define NVS_NS_CAL            "spectrum_cal"
 #define NVS_KEY_NF_FFT_SIZE   "nf_fft_size"
@@ -343,7 +350,10 @@ static void dsp_task(void *arg)
             for (uint32_t k = 0; k < bin_count; k++) {
                 float cur_pwr = powf(10.0f, s_magnitude_db[k] * 0.1f);
                 /* Asymmetric update */
-                float alpha = (cur_pwr < s_ambient_power[k]) ? AMBIENT_ALPHA_DOWN : AMBIENT_ALPHA_UP;
+                float alpha;
+                if      (cur_pwr < s_ambient_power[k])                       alpha = AMBIENT_ALPHA_DOWN;
+                else if (cur_pwr < s_ambient_power[k] * AMBIENT_NEAR_FACTOR) alpha = AMBIENT_ALPHA_NEAR;
+                else                                                         alpha = AMBIENT_ALPHA_UP;
                 s_ambient_power[k] = (1.0f - alpha) * s_ambient_power[k] + alpha * cur_pwr;
                 /* Subtract estimate × margin */
                 float net = cur_pwr - s_ambient_power[k] * margin;

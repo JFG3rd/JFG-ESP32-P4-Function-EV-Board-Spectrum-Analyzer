@@ -86,6 +86,7 @@ static char *_settings_to_json(const settings_t *cfg)
     cJSON_AddNumberToObject(root, "screen_brightness",          cfg->screen_brightness);
     cJSON_AddNumberToObject(root, "db_range",                   cfg->db_range);
     cJSON_AddNumberToObject(root, "display_mode",               cfg->display_mode);
+    cJSON_AddNumberToObject(root, "ambient_margin",             (double)cfg->ambient_margin);
 
     char *str = cJSON_Print(root);
     cJSON_Delete(root);
@@ -124,6 +125,7 @@ static bool _json_to_settings(const char *json_str, settings_t *out)
     GET_INT ("screen_brightness",        screen_brightness);
     GET_INT ("db_range",                 db_range);
     GET_INT ("display_mode",             display_mode);
+    GET_FLT ("ambient_margin",           ambient_margin);
 
 #undef GET_INT
 #undef GET_FLT
@@ -273,6 +275,7 @@ static void settings_sanitize(settings_t *s)
     s->peak_decay_db_per_frame = _clampf(s->peak_decay_db_per_frame, 0.05f, 5.0f, 0.25f);
     s->screen_brightness       = _clampi(s->screen_brightness, 10, 100, 100);
     s->db_range                = _clampi(s->db_range, 60, 120, 120);
+    s->ambient_margin          = _clampf(s->ambient_margin, 1.0f, 4.0f, 1.5f);
 }
 
 static void _set_defaults(settings_t *out)
@@ -288,6 +291,7 @@ static void _set_defaults(settings_t *out)
     out->screen_brightness        = 100;
     out->db_range                 = 120;    /* full -120…0 dB span */
     out->display_mode             = DISPLAY_MODE_BARS;
+    out->ambient_margin           = 1.5f;
 }
 
 esp_err_t settings_mgr_load(settings_t *out)

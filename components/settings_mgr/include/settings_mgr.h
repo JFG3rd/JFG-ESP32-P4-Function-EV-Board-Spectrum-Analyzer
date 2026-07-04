@@ -47,6 +47,7 @@ typedef struct {
     int            screen_brightness;   /* LCD backlight 10-100 %                      */
     int            db_range;            /* display dB span: 60/80/100/120 dB           */
     int            display_mode;        /* display_mode_t: bars/line/RTA/...           */
+    float          ambient_margin;      /* ambient subtraction strength: 1.1/1.5/2.5   */
 } settings_t;
 
 /**

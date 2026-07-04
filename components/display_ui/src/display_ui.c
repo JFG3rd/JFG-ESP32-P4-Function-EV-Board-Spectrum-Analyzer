@@ -47,6 +47,7 @@ static bool         s_last_max_hold   = false;
 static int          s_last_brightness = 100;
 static int          s_last_db_range   = 120;
 static int          s_last_disp_mode  = DISPLAY_MODE_BARS;
+static float        s_last_amb_margin = 1.5f;
 
 /* ── settings change handler ──────────────────────────────────── */
 static void on_settings_changed(const dsp_config_t *new_cfg, void *ctx)
@@ -67,7 +68,8 @@ static void on_settings_changed(const dsp_config_t *new_cfg, void *ctx)
                      .max_hold_enabled        = s_last_max_hold,
                      .screen_brightness       = s_last_brightness,
                      .db_range                = s_last_db_range,
-                     .display_mode            = s_last_disp_mode };
+                     .display_mode            = s_last_disp_mode,
+                     .ambient_margin          = s_last_amb_margin };
     settings_mgr_save(&s);
 }
 
@@ -89,7 +91,8 @@ static void on_mic_gain_changed(int gain_db, void *ctx)
                      .max_hold_enabled        = s_last_max_hold,
                      .screen_brightness       = s_last_brightness,
                      .db_range                = s_last_db_range,
-                     .display_mode            = s_last_disp_mode };
+                     .display_mode            = s_last_disp_mode,
+                     .ambient_margin          = s_last_amb_margin };
     settings_mgr_save(&s);
 }
 
@@ -126,6 +129,14 @@ void display_ui_set_db_range(int range_db)
     if (range_db > 120) range_db = 120;
     s_last_db_range = range_db;
     screen_spectrum_set_db_range(range_db);
+}
+
+void display_ui_set_ambient_margin(float margin)
+{
+    if (margin < 1.0f) margin = 1.0f;
+    if (margin > 4.0f) margin = 4.0f;
+    s_last_amb_margin = margin;
+    dsp_engine_set_ambient_margin(margin);
 }
 
 void display_ui_set_display_mode(int mode)
@@ -185,7 +196,8 @@ void display_ui_notify_color_scheme(color_scheme_t scheme)
                      .max_hold_enabled        = s_last_max_hold,
                      .screen_brightness       = s_last_brightness,
                      .db_range                = s_last_db_range,
-                     .display_mode            = s_last_disp_mode };
+                     .display_mode            = s_last_disp_mode,
+                     .ambient_margin          = s_last_amb_margin };
     settings_mgr_save(&s);
 }
 
