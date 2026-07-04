@@ -49,7 +49,7 @@ esp_err_t display_hw_init(lv_display_t **disp_out)
 {
     ESP_LOGI(TAG, "display_hw_init: backlight + LDO + DSI + LVGL");
 
-    /* Step 1: LEDC backlight timer (GPIO26 is strapping pin, fixed in Step 8) */
+    /* Step 1: LEDC backlight PWM on GPIO26 */
     ESP_RETURN_ON_ERROR(bsp_display_brightness_init(), TAG, "brightness_init failed");
 
     /* Step 2: Power MIPI DSI PHY via on-chip LDO (2500 mV) */
@@ -166,11 +166,15 @@ esp_err_t display_hw_init(lv_display_t **disp_out)
     ESP_RETURN_ON_ERROR(esp_lcd_dpi_panel_register_event_callbacks(panel, &dpi_cbs, disp),
                         TAG, "re-register IRAM flush cb failed");
 
-    /* Step 8: Backlight ON — GPIO26 is a strapping pin, LEDC can't drive it */
-    bsp_display_backlight_on();      /* logs a warning about GPIO26, harmless */
-    gpio_reset_pin(GPIO_NUM_26);
-    gpio_set_direction(GPIO_NUM_26, GPIO_MODE_OUTPUT);
-    gpio_set_level(GPIO_NUM_26, 1);
+    /* Step 8: Backlight ON at 100% via LEDC PWM (duty is 0 after init);
+     * main.c applies the persisted brightness right after display init.
+     *
+     * NOTE: do NOT gpio_reset/force GPIO26 here. It is a strapping pin,
+     * but strapping only matters at reset sampling — after boot LEDC
+     * drives it fine. A previous "fix" reset the pin and tied it high,
+     * which disconnected the PWM output and silently pinned the
+     * backlight at 100%, making the brightness setting a no-op. */
+    bsp_display_backlight_on();
 
     /* Step 9: Touch (GT911) → LVGL input device. Non-fatal if it fails —
      * the display is still usable read-only, just without touch nav.
