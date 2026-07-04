@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Spectrum Analyzer WiFi Setup</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/style.css">
+    <script>
+        const statusElId = "wifiStatusMsg";
+        function setStatus(message, isError = false) {
+            const el = document.getElementById(statusElId);
+            if (!el) return;
+            el.textContent = message || "";
+            el.style.color = isError ? "#ff4b4b" : "";
+        }
+
+        function getSelectedSsid() {
+            const manual = document.getElementById("manual_ssid").value.trim();
+            const selected = document.getElementById("ssid").value.trim();
+            return manual.length ? manual : selected;
+        }
+
+        function connectWiFi() {
+            // Save WiFi credentials to NVS and reboot.
+            const ssid = getSelectedSsid();
+            const password = document.getElementById("password").value;
+
+            if (ssid === "") {
+                alert("⚠️ Please select or enter an SSID!");
+                return;
+            }
+
+            fetch("/saveWiFi", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ "ssid": ssid, "password": password })
+            }).then(response => response.text())
+              .then(text => {
+                  alert(text + "\nThe analyzer will restart now.");
+                  setTimeout(() => location.reload(), 3000);
+              })
+              .catch(error => {
+                  alert("Error saving WiFi credentials: " + error);
+              });
+        }
+        function rescanWiFi() {
+            setStatus("Scanning for networks...");
+            fetch("/scanWifi")
+                .then(response => response.text())
+                .then(() => pollWifiScanResults(8))
+                .catch(error => {
+                    alert("Error starting WiFi scan: " + error);
+                });
+        }
+
+        function updateSsidOptions(ssids, scanning) {
+            const select = document.getElementById("ssid");
+            const current = select.value;
+            select.innerHTML = "";
+            const placeholder = document.createElement("option");
+            placeholder.value = "";
+            placeholder.textContent = "-- Select WiFi Network --";
+            select.appendChild(placeholder);
+            if (!Array.isArray(ssids) || ssids.length === 0) {
+                const label = scanning ? "(scanning...) refresh in a few seconds" : "(no networks found)";
+                const option = document.createElement("option");
+                option.value = "";
+                option.disabled = true;
+                option.textContent = label;
+                select.appendChild(option);
+            } else {
+                ssids.forEach(ssid => {
+                    const option = document.createElement("option");
+                    option.value = String(ssid);
+                    option.textContent = String(ssid);
+                    select.appendChild(option);
+                });
+            }
+            if (current) {
+                select.value = current;
+            }
+        }
+
+        function pollWifiScanResults(remaining) {
+            fetch("/wifiScanResults")
+                .then(r => r.json())
+                .then(data => {
+                    updateSsidOptions(data.ssids || [], data.inProgress);
+                    if (data.inProgress && remaining > 0) {
+                        setTimeout(() => pollWifiScanResults(remaining - 1), 1000);
+                        return;
+                    }
+                    setStatus("");
+                })
+                .catch(() => {
+                    setStatus("Failed to load scan results.", true);
+                });
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            const manualSsid = document.getElementById("manual_ssid");
+            const select = document.getElementById("ssid");
+            manualSsid.addEventListener("input", () => {
+                if (manualSsid.value.trim().length) {
+                    select.value = "";
+                }
+            });
+            select.addEventListener("change", () => {
+                if (select.value) {
+                    manualSsid.value = "";
+                }
+            });
+            pollWifiScanResults(8);
+        });
+    </script>
+</head>
+<body>
+    <div class="wifi-setup-container">
+        <h1>🎵 Spectrum Analyzer Wi-Fi Setup</h1>
+        <p>Connect the analyzer to your local WiFi network</p>
+        
+        <label><strong>Select Network:</strong></label>
+        <select id="ssid">
+            <option value="">-- Select WiFi Network --</option>
+            {{SSID_OPTIONS}}
+        </select>
+        
+        <label><strong>Or Enter SSID Manually:</strong></label>
+        <input type="text" id="manual_ssid" placeholder="Enter SSID (if hidden)" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+        
+        <label><strong>Password:</strong></label>
+        <input type="password" id="password" placeholder="Enter Wi-Fi Password" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="new-password">
+        
+        <button class="button btn-save" title="Save WiFi credentials and reboot into STA mode." onclick="connectWiFi()">💾 Save & Connect</button>
+        <button class="button btn-info" title="Refresh the list of available WiFi networks." onclick="rescanWiFi()">🔄 Rescan WiFi</button>
+
+        <div class="flash-stats" id="wifiStatusMsg" style="margin-top: 12px;"></div>
+        
+        <footer>
+            <p class="disclaimer">ESP32-P4 Spectrum Analyzer</p>
+        </footer>
+    </div>
+</body>
+</html>

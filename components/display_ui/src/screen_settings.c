@@ -336,20 +336,46 @@ static void sd_format_btn_cb(lv_event_t *e)
         r == ESP_OK ? "SD: Formatted " LV_SYMBOL_OK : "SD: Format failed");
 }
 
-static lv_obj_t *make_labeled_dropdown(lv_obj_t *parent, const char *label_txt,
-                                        const char *opts, int32_t y)
+/* Labeled dropdown at arbitrary column position.
+ * Left column: lbl_x=20,  dd_x=160, dd_w=220
+ * Right column: lbl_x=540, dd_x=700, dd_w=200 */
+static lv_obj_t *make_labeled_dropdown_at(lv_obj_t *parent, const char *label_txt,
+                                          const char *opts, int32_t lbl_x,
+                                          int32_t dd_x, int32_t dd_w, int32_t y)
 {
     lv_obj_t *lbl = lv_label_create(parent);
     lv_label_set_text(lbl, label_txt);
     lv_obj_set_style_text_color(lbl, lv_color_hex(0xCCDDEE), 0);
     lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(lbl, 20, y);
+    lv_obj_set_pos(lbl, lbl_x, y);
 
     lv_obj_t *dd = lv_dropdown_create(parent);
     lv_dropdown_set_options(dd, opts);
-    lv_obj_set_size(dd, 220, 36);
-    lv_obj_set_pos(dd, 160, y - 6);
+    lv_obj_set_size(dd, dd_w, 36);
+    lv_obj_set_pos(dd, dd_x, y - 6);
     return dd;
+}
+
+static lv_obj_t *make_labeled_dropdown(lv_obj_t *parent, const char *label_txt,
+                                        const char *opts, int32_t y)
+{
+    return make_labeled_dropdown_at(parent, label_txt, opts, 20, 160, 220, y);
+}
+
+static lv_obj_t *make_labeled_dropdown_r(lv_obj_t *parent, const char *label_txt,
+                                          const char *opts, int32_t y)
+{
+    return make_labeled_dropdown_at(parent, label_txt, opts, 540, 700, 200, y);
+}
+
+/* Section header in accent color */
+static void make_group_header(lv_obj_t *parent, const char *txt, int32_t x, int32_t y)
+{
+    lv_obj_t *hdr = lv_label_create(parent);
+    lv_label_set_text(hdr, txt);
+    lv_obj_set_style_text_color(hdr, lv_color_hex(0x88AACC), 0);
+    lv_obj_set_style_text_font(hdr, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(hdr, x, y);
 }
 
 esp_err_t screen_settings_create(settings_changed_cb_t cb, void *ctx,
@@ -366,105 +392,22 @@ esp_err_t screen_settings_create(settings_changed_cb_t cb, void *ctx,
     lv_obj_set_style_pad_all(s_screen, 0, 0);
 
     lv_obj_t *title = lv_label_create(s_screen);
-    lv_label_set_text(title, "DSP Settings");
+    lv_label_set_text(title, "Settings");
     lv_obj_set_style_text_color(title, lv_color_hex(0xCCDDEE), 0);
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
     lv_obj_align(title, LV_ALIGN_TOP_LEFT, 20, 12);
 
-    s_dd_color_scheme = make_labeled_dropdown(s_screen, "Color:",       color_scheme_opts, 42);
+    /* ══ LEFT COLUMN — audio pipeline ═══════════════════════════ */
 
-    /* Right column — peak hold decay rate (x=540-780) */
-    lv_obj_t *pd_hdr = lv_label_create(s_screen);
-    lv_label_set_text(pd_hdr, "Peak Hold Settings");
-    lv_obj_set_style_text_color(pd_hdr, lv_color_hex(0xCCDDEE), 0);
-    lv_obj_set_style_text_font(pd_hdr, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(pd_hdr, 540, 12);
+    make_group_header(s_screen, "AUDIO / DSP", 20, 38);
+    s_dd_fft       = make_labeled_dropdown(s_screen, "FFT size:",  fft_size_opts,  64);
+    s_dd_window    = make_labeled_dropdown(s_screen, "Window:",    window_opts,   109);
+    s_dd_avg       = make_labeled_dropdown(s_screen, "Averaging:", avg_opts,      154);
+    s_dd_overlap   = make_labeled_dropdown(s_screen, "Overlap:",   overlap_opts,  199);
+    s_dd_gain      = make_labeled_dropdown(s_screen, "Mic gain:",  gain_opts,     244);
 
-    lv_obj_t *pd_lbl = lv_label_create(s_screen);
-    lv_label_set_text(pd_lbl, "PK Decay Rate:");
-    lv_obj_set_style_text_color(pd_lbl, lv_color_hex(0xCCDDEE), 0);
-    lv_obj_set_style_text_font(pd_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(pd_lbl, 540, 42);
-
-    s_dd_peak_decay = lv_dropdown_create(s_screen);
-    lv_dropdown_set_options(s_dd_peak_decay, peak_decay_opts);
-    lv_obj_set_size(s_dd_peak_decay, 200, 36);
-    lv_obj_set_pos(s_dd_peak_decay, 700, 36);
-
-    lv_obj_t *bd_lbl = lv_label_create(s_screen);
-    lv_label_set_text(bd_lbl, "Bar Decay Rate:");
-    lv_obj_set_style_text_color(bd_lbl, lv_color_hex(0xCCDDEE), 0);
-    lv_obj_set_style_text_font(bd_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(bd_lbl, 540, 90);
-
-    s_dd_bar_decay = lv_dropdown_create(s_screen);
-    lv_dropdown_set_options(s_dd_bar_decay, bar_decay_opts);
-    lv_obj_set_size(s_dd_bar_decay, 200, 36);
-    lv_obj_set_pos(s_dd_bar_decay, 700, 84);
-
-    /* Screen brightness — live slider, persisted on release */
-    lv_obj_t *br_lbl = lv_label_create(s_screen);
-    lv_label_set_text(br_lbl, "Brightness:");
-    lv_obj_set_style_text_color(br_lbl, lv_color_hex(0xCCDDEE), 0);
-    lv_obj_set_style_text_font(br_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(br_lbl, 540, 138);
-
-    s_slider_brightness = lv_slider_create(s_screen);
-    lv_slider_set_range(s_slider_brightness, 10, 100);
-    lv_slider_set_value(s_slider_brightness, 100, LV_ANIM_OFF);
-    lv_obj_set_size(s_slider_brightness, 160, 12);
-    lv_obj_set_pos(s_slider_brightness, 700, 142);
-    lv_obj_add_event_cb(s_slider_brightness, brightness_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_obj_add_event_cb(s_slider_brightness, brightness_slider_cb, LV_EVENT_RELEASED, NULL);
-
-    s_lbl_brightness_val = lv_label_create(s_screen);
-    lv_label_set_text(s_lbl_brightness_val, "100%");
-    lv_obj_set_style_text_color(s_lbl_brightness_val, lv_color_hex(0xCCDDEE), 0);
-    lv_obj_set_style_text_font(s_lbl_brightness_val, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(s_lbl_brightness_val, 875, 138);
-
-    /* Display dB range — how many dB the full bar height spans */
-    lv_obj_t *dr_lbl = lv_label_create(s_screen);
-    lv_label_set_text(dr_lbl, "Display Range:");
-    lv_obj_set_style_text_color(dr_lbl, lv_color_hex(0xCCDDEE), 0);
-    lv_obj_set_style_text_font(dr_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(dr_lbl, 540, 186);
-
-    s_dd_db_range = lv_dropdown_create(s_screen);
-    lv_dropdown_set_options(s_dd_db_range, db_range_opts);
-    lv_obj_set_size(s_dd_db_range, 200, 36);
-    lv_obj_set_pos(s_dd_db_range, 700, 180);
-
-    /* Display mode — bars / line / RTA / persistence / waterfall / scope / VU / mirror */
-    lv_obj_t *dm_lbl = lv_label_create(s_screen);
-    lv_label_set_text(dm_lbl, "Display Mode:");
-    lv_obj_set_style_text_color(dm_lbl, lv_color_hex(0xCCDDEE), 0);
-    lv_obj_set_style_text_font(dm_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(dm_lbl, 540, 234);
-
-    s_dd_disp_mode = lv_dropdown_create(s_screen);
-    lv_dropdown_set_options(s_dd_disp_mode, disp_mode_opts);
-    lv_obj_set_size(s_dd_disp_mode, 200, 36);
-    lv_obj_set_pos(s_dd_disp_mode, 700, 228);
-
-    /* Ambient subtraction strength — how aggressively the rolling ambient
-     * estimate is subtracted (matters most with acoustic room noise) */
-    lv_obj_t *as_lbl = lv_label_create(s_screen);
-    lv_label_set_text(as_lbl, "Ambient Strength:");
-    lv_obj_set_style_text_color(as_lbl, lv_color_hex(0xCCDDEE), 0);
-    lv_obj_set_style_text_font(as_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(as_lbl, 540, 282);
-
-    s_dd_amb_strength = lv_dropdown_create(s_screen);
-    lv_dropdown_set_options(s_dd_amb_strength, amb_strength_opts);
-    lv_obj_set_size(s_dd_amb_strength, 200, 36);
-    lv_obj_set_pos(s_dd_amb_strength, 700, 276);
-    s_dd_fft     = make_labeled_dropdown(s_screen, "FFT size:",     fft_size_opts,  90);
-    s_dd_window  = make_labeled_dropdown(s_screen, "Window:",       window_opts,   135);
-    s_dd_avg     = make_labeled_dropdown(s_screen, "Averaging:",    avg_opts,      180);
-    s_dd_overlap = make_labeled_dropdown(s_screen, "Overlap:",      overlap_opts,  225);
-    s_dd_gain    = make_labeled_dropdown(s_screen, "Mic gain:",     gain_opts,     270);
-    s_dd_nf_enable = make_labeled_dropdown(s_screen, "Noise Floor:", "Off\nOn",   315);
+    make_group_header(s_screen, "NOISE REDUCTION", 20, 292);
+    s_dd_nf_enable = make_labeled_dropdown(s_screen, "Noise Floor:", "Off\nOn",   318);
 
     /* Noise floor status label */
     s_lbl_nf_status = lv_label_create(s_screen);
@@ -472,12 +415,12 @@ esp_err_t screen_settings_create(settings_changed_cb_t cb, void *ctx,
                       dsp_engine_has_noise_floor() ? "Calibrated " LV_SYMBOL_OK : "Not calibrated");
     lv_obj_set_style_text_color(s_lbl_nf_status, lv_color_hex(0x88AACC), 0);
     lv_obj_set_style_text_font(s_lbl_nf_status, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(s_lbl_nf_status, 20, 360);
+    lv_obj_set_pos(s_lbl_nf_status, 20, 363);
 
     /* Noise floor capture button */
     s_btn_nf_capture = lv_button_create(s_screen);
     lv_obj_set_size(s_btn_nf_capture, 160, 38);
-    lv_obj_set_pos(s_btn_nf_capture, 20, 395);
+    lv_obj_set_pos(s_btn_nf_capture, 20, 384);
     lv_obj_add_event_cb(s_btn_nf_capture, capture_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *cap_lbl = lv_label_create(s_btn_nf_capture);
     lv_label_set_text(cap_lbl, "Capture Noise Floor");
@@ -486,11 +429,58 @@ esp_err_t screen_settings_create(settings_changed_cb_t cb, void *ctx,
     /* Noise floor clear button */
     lv_obj_t *clr_btn = lv_button_create(s_screen);
     lv_obj_set_size(clr_btn, 120, 38);
-    lv_obj_set_pos(clr_btn, 192, 395);
+    lv_obj_set_pos(clr_btn, 192, 384);
     lv_obj_add_event_cb(clr_btn, clear_btn_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t *clr_lbl = lv_label_create(clr_btn);
     lv_label_set_text(clr_lbl, "Clear");
     lv_obj_center(clr_lbl);
+
+    /* Live ambient noise subtraction toggle + strength */
+    lv_obj_t *ambient_lbl = lv_label_create(s_screen);
+    lv_label_set_text(ambient_lbl, "Subtract Ambient Noise:");
+    lv_obj_set_style_text_color(ambient_lbl, lv_color_hex(0xCCDDEE), 0);
+    lv_obj_set_style_text_font(ambient_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(ambient_lbl, 20, 434);
+
+    s_sw_ambient = lv_switch_create(s_screen);
+    lv_obj_set_pos(s_sw_ambient, 300, 431);
+    lv_obj_add_event_cb(s_sw_ambient, ambient_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    /* Initialise switch state from DSP engine */
+    if (dsp_engine_ambient_noise_active())
+        lv_obj_add_state(s_sw_ambient, LV_STATE_CHECKED);
+
+    s_dd_amb_strength = make_labeled_dropdown(s_screen, "Ambient Strength:",
+                                              amb_strength_opts, 478);
+
+    /* ══ RIGHT COLUMN — display + storage ═══════════════════════ */
+
+    make_group_header(s_screen, "DISPLAY", 540, 38);
+    s_dd_disp_mode    = make_labeled_dropdown_r(s_screen, "Display Mode:",  disp_mode_opts,    64);
+    s_dd_color_scheme = make_labeled_dropdown_r(s_screen, "Color Theme:",   color_scheme_opts, 109);
+    s_dd_db_range     = make_labeled_dropdown_r(s_screen, "Display Range:", db_range_opts,     154);
+    s_dd_bar_decay    = make_labeled_dropdown_r(s_screen, "Bar Decay:",     bar_decay_opts,    199);
+    s_dd_peak_decay   = make_labeled_dropdown_r(s_screen, "PK Decay:",      peak_decay_opts,   244);
+
+    /* Screen brightness — live slider, persisted on release */
+    lv_obj_t *br_lbl = lv_label_create(s_screen);
+    lv_label_set_text(br_lbl, "Brightness:");
+    lv_obj_set_style_text_color(br_lbl, lv_color_hex(0xCCDDEE), 0);
+    lv_obj_set_style_text_font(br_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(br_lbl, 540, 289);
+
+    s_slider_brightness = lv_slider_create(s_screen);
+    lv_slider_set_range(s_slider_brightness, 10, 100);
+    lv_slider_set_value(s_slider_brightness, 100, LV_ANIM_OFF);
+    lv_obj_set_size(s_slider_brightness, 160, 12);
+    lv_obj_set_pos(s_slider_brightness, 700, 293);
+    lv_obj_add_event_cb(s_slider_brightness, brightness_slider_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(s_slider_brightness, brightness_slider_cb, LV_EVENT_RELEASED, NULL);
+
+    s_lbl_brightness_val = lv_label_create(s_screen);
+    lv_label_set_text(s_lbl_brightness_val, "100%");
+    lv_obj_set_style_text_color(s_lbl_brightness_val, lv_color_hex(0xCCDDEE), 0);
+    lv_obj_set_style_text_font(s_lbl_brightness_val, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(s_lbl_brightness_val, 875, 289);
 
     /* Set initial selection to match default config */
     lv_dropdown_set_selected(s_dd_color_scheme, COLOR_SCHEME_DARK);
@@ -506,42 +496,29 @@ esp_err_t screen_settings_create(settings_changed_cb_t cb, void *ctx,
     lv_dropdown_set_selected(s_dd_gain,         gain_db_to_index(s_cur_gain_db));
     lv_dropdown_set_selected(s_dd_nf_enable,    s_cur_cfg.noise_floor_enabled ? 1 : 0);
 
-    /* ── Live ambient noise subtraction toggle ─── */
-    lv_obj_t *ambient_lbl = lv_label_create(s_screen);
-    lv_label_set_text(ambient_lbl, "Subtract Ambient Noise:");
-    lv_obj_set_style_text_color(ambient_lbl, lv_color_hex(0xCCDDEE), 0);
-    lv_obj_set_style_text_font(ambient_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_set_pos(ambient_lbl, 20, 441);
-
-    s_sw_ambient = lv_switch_create(s_screen);
-    lv_obj_set_pos(s_sw_ambient, 300, 438);
-    lv_obj_add_event_cb(s_sw_ambient, ambient_switch_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    /* Initialise switch state from DSP engine */
-    if (dsp_engine_ambient_noise_active())
-        lv_obj_add_state(s_sw_ambient, LV_STATE_CHECKED);
-
-    /* SD card status + Save / Load / Retry / Format */
+    /* Presets / SD card — status + Save / Load / Retry / Format */
+    make_group_header(s_screen, "PRESETS / SD CARD", 540, 340);
     s_lbl_sd_status = lv_label_create(s_screen);
     lv_label_set_text(s_lbl_sd_status,
                       settings_mgr_sd_available() ? "SD: Ready" : "SD: Not found (NVS backup)");
     lv_obj_set_style_text_color(s_lbl_sd_status, lv_color_hex(0x88AACC), 0);
     lv_obj_set_style_text_font(s_lbl_sd_status, &lv_font_montserrat_12, 0);
-    lv_obj_set_pos(s_lbl_sd_status, 20, 486);
+    lv_obj_set_pos(s_lbl_sd_status, 540, 366);
 
 #define MAKE_SD_BTN(label_str, cb, x_pos, w_px) do { \
     lv_obj_t *_b = lv_button_create(s_screen);        \
     lv_obj_set_size(_b, w_px, 28);                    \
-    lv_obj_set_pos(_b, x_pos, 505);                   \
+    lv_obj_set_pos(_b, x_pos, 390);                   \
     lv_obj_add_event_cb(_b, cb, LV_EVENT_CLICKED, NULL); \
     lv_obj_t *_l = lv_label_create(_b);               \
     lv_label_set_text(_l, label_str);                  \
     lv_obj_center(_l);                                 \
 } while(0)
 
-    MAKE_SD_BTN("Save",   sd_save_btn_cb,   20,  95);
-    MAKE_SD_BTN("Load",   sd_load_btn_cb,  117,  95);
-    MAKE_SD_BTN("Retry",  sd_retry_btn_cb, 214,  80);
-    MAKE_SD_BTN("Format", sd_format_btn_cb,296,  80);
+    MAKE_SD_BTN("Save",   sd_save_btn_cb,  540,  95);
+    MAKE_SD_BTN("Load",   sd_load_btn_cb,  637,  95);
+    MAKE_SD_BTN("Retry",  sd_retry_btn_cb, 734,  80);
+    MAKE_SD_BTN("Format", sd_format_btn_cb,816,  80);
 
 #undef MAKE_SD_BTN
 

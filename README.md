@@ -36,8 +36,12 @@ Analog Mic ──► ES8311 ──► I2S DMA ──► DSP Engine ──► LVG
 
 ## Roadmap (Phase 2)
 
-- **USB Audio Class (UAC1)** microphone as primary source (nad dirac microphone) with upload of mic calibration file, hot-swap with fallback to I2S
-- **WiFi** via ESP32-C5 companion chip (SDIO) — AP mode out of the box
+- ✅ **USB Audio Class (UAC1)** microphone as primary source (NAD/Dirac UMIK-1 + generic UAC1), hot-swap with fallback to I2S — calibration-file upload still pending
+- **WiFi** via ESP32-C6 companion chip (SDIO) — **provisioning portal**: device starts a
+  WPA2 setup AP, serves a WiFi setup page (scan for local SSIDs, de-duplicated by
+  strongest signal, pick or type one, enter password), then joins the local WLAN as a
+  station; falls back to the setup AP when the join fails. Portal page adapted from
+  [HomeKitKnock-S3](https://github.com/JFG3rd/HomeKitKnock-S3) (see `web/`)
 - **WebSocket web UI** — live spectrum stream at 192.168.4.1
 - **REST API** — GET/PUT config, OTA firmware update, CSV export
 - **Calibration files** — CSV/TXT/JSON with linear or cubic-spline frequency correction
