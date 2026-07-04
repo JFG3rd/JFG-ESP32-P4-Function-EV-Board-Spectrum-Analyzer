@@ -10,6 +10,7 @@
 #include "esp_log.h"
 #include "lvgl.h"
 #include "settings_mgr.h"
+#include "dsp_engine.h"
 #include "screen_settings.h"
 #include "screen_file_dialog.h"
 
@@ -326,4 +327,125 @@ void screen_files_show(void)
     lv_label_set_text(s_files_status, "");
     files_refresh();
     lv_screen_load(s_files_screen);
+}
+
+/* ── Mic calibration file picker ──────────────────────────────── */
+
+static lv_obj_t *s_cal_screen;
+static lv_obj_t *s_cal_list;
+static lv_obj_t *s_cal_status;
+static char      s_cal_selected[SETTINGS_NAME_MAX];
+
+static void calfile_item_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    lv_obj_t *btn = lv_event_get_target(e);
+    const char *txt = lv_list_get_button_text(s_cal_list, btn);
+    if (!txt) return;
+
+    strlcpy(s_cal_selected, txt, sizeof(s_cal_selected));
+
+    uint32_t cnt = lv_obj_get_child_count(s_cal_list);
+    for (uint32_t i = 0; i < cnt; i++)
+        lv_obj_remove_state(lv_obj_get_child(s_cal_list, i), LV_STATE_CHECKED);
+    lv_obj_add_state(btn, LV_STATE_CHECKED);
+
+    char msg[48];
+    snprintf(msg, sizeof(msg), "Selected: %s", s_cal_selected);
+    lv_label_set_text(s_cal_status, msg);
+}
+
+static void cal_refresh(void)
+{
+    lv_obj_clean(s_cal_list);
+    s_cal_selected[0] = '\0';
+
+    static char names[MAX_PRESETS][SETTINGS_NAME_MAX];
+    int n = settings_mgr_list_cal_files(names, MAX_PRESETS);
+
+    if (n <= 0) {
+        lv_list_add_text(s_cal_list,
+                         "No files in /sdcard/spectrum/cal (.txt/.csv/.cal)");
+        return;
+    }
+    for (int i = 0; i < n; i++) {
+        lv_obj_t *btn = lv_list_add_button(s_cal_list, LV_SYMBOL_FILE, names[i]);
+        lv_obj_add_event_cb(btn, calfile_item_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_set_style_bg_color(btn, lv_color_hex(0x2A4A7A), LV_PART_MAIN | LV_STATE_CHECKED);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN | LV_STATE_CHECKED);
+    }
+}
+
+static void cal_load_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (s_cal_selected[0] == '\0') {
+        lv_label_set_text(s_cal_status, "Select a file first");
+        return;
+    }
+    char path[sizeof(SETTINGS_CAL_DIR) + SETTINGS_NAME_MAX + 2];
+    snprintf(path, sizeof(path), SETTINGS_CAL_DIR "/%s", s_cal_selected);
+
+    esp_err_t r = dsp_engine_load_calibration(path);
+    if (r != ESP_OK) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "Invalid cal file (%s)", esp_err_to_name(r));
+        lv_label_set_text(s_cal_status, msg);
+        return;
+    }
+    screen_settings_set_cal_file(s_cal_selected);   /* enables + persists */
+    screen_settings_load();
+}
+
+static void cal_back_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) == LV_EVENT_CLICKED) screen_settings_load();
+}
+
+static void cal_create(void)
+{
+    s_cal_screen = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_cal_screen, lv_color_hex(0x0D1B2A), 0);
+    lv_obj_set_style_pad_all(s_cal_screen, 0, 0);
+
+    lv_obj_t *title = lv_label_create(s_cal_screen);
+    lv_label_set_text(title, "Microphone Calibration Files (SD Card)");
+    lv_obj_set_style_text_color(title, lv_color_hex(0xCCDDEE), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_set_pos(title, 20, 14);
+
+    s_cal_list = lv_list_create(s_cal_screen);
+    lv_obj_set_size(s_cal_list, 560, 470);
+    lv_obj_set_pos(s_cal_list, 20, 50);
+
+    s_cal_status = lv_label_create(s_cal_screen);
+    lv_label_set_text(s_cal_status, "");
+    lv_obj_set_style_text_color(s_cal_status, lv_color_hex(0x88AACC), 0);
+    lv_obj_set_style_text_font(s_cal_status, &lv_font_montserrat_14, 0);
+    lv_obj_set_pos(s_cal_status, 20, 535);
+
+#define MAKE_CALPICK_BTN(label_str, cb, y_pos) do {   \
+    lv_obj_t *_b = lv_button_create(s_cal_screen);    \
+    lv_obj_set_size(_b, 180, 56);                     \
+    lv_obj_set_pos(_b, 640, y_pos);                   \
+    lv_obj_add_event_cb(_b, cb, LV_EVENT_CLICKED, NULL); \
+    lv_obj_t *_l = lv_label_create(_b);               \
+    lv_label_set_text(_l, label_str);                 \
+    lv_obj_center(_l);                                \
+} while (0)
+
+    MAKE_CALPICK_BTN("Load",  cal_load_cb,  60);
+    MAKE_CALPICK_BTN("Back",  cal_back_cb, 140);
+
+#undef MAKE_CALPICK_BTN
+
+    ESP_LOGI(TAG, "cal file picker created");
+}
+
+void screen_calfiles_show(void)
+{
+    if (!s_cal_screen) cal_create();
+    lv_label_set_text(s_cal_status, "");
+    cal_refresh();
+    lv_screen_load(s_cal_screen);
 }

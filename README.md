@@ -44,7 +44,8 @@ Analog Mic ──► ES8311 ──► I2S DMA ──► DSP Engine ──► LVG
   [HomeKitKnock-S3](https://github.com/JFG3rd/HomeKitKnock-S3) (see `web/`)
 - **WebSocket web UI** — live spectrum stream at 192.168.4.1
 - **REST API** — GET/PUT config, OTA firmware update, CSV export
-- **Calibration files** — CSV/TXT/JSON with linear or cubic-spline frequency correction
+- ✅ **Calibration files** — UMIK-1 .txt / generic CSV from SD card, per-bin log-frequency
+  interpolated correction applied after the FFT (upload via REST comes with M4)
 - **SD card** — continuous recording and CSV spectrum exports
 - **mDNS** — `spectrumanalyzer.local` service discovery
 - **GitHub Actions CI** — ESP-IDF 5.5 build + host-side unit tests

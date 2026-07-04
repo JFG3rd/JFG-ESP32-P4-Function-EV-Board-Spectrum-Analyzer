@@ -48,6 +48,8 @@ static int          s_last_brightness = 100;
 static int          s_last_db_range   = 120;
 static int          s_last_disp_mode  = DISPLAY_MODE_BARS;
 static float        s_last_amb_margin = 1.5f;
+static bool         s_last_cal_enabled = false;
+static char         s_last_cal_file[32] = "";
 
 /* ── settings change handler ──────────────────────────────────── */
 static void on_settings_changed(const dsp_config_t *new_cfg, void *ctx)
@@ -69,7 +71,9 @@ static void on_settings_changed(const dsp_config_t *new_cfg, void *ctx)
                      .screen_brightness       = s_last_brightness,
                      .db_range                = s_last_db_range,
                      .display_mode            = s_last_disp_mode,
-                     .ambient_margin          = s_last_amb_margin };
+                     .ambient_margin          = s_last_amb_margin,
+                     .cal_enabled             = s_last_cal_enabled };
+    strlcpy(s.cal_file, s_last_cal_file, sizeof(s.cal_file));
     settings_mgr_save(&s);
 }
 
@@ -92,7 +96,9 @@ static void on_mic_gain_changed(int gain_db, void *ctx)
                      .screen_brightness       = s_last_brightness,
                      .db_range                = s_last_db_range,
                      .display_mode            = s_last_disp_mode,
-                     .ambient_margin          = s_last_amb_margin };
+                     .ambient_margin          = s_last_amb_margin,
+                     .cal_enabled             = s_last_cal_enabled };
+    strlcpy(s.cal_file, s_last_cal_file, sizeof(s.cal_file));
     settings_mgr_save(&s);
 }
 
@@ -129,6 +135,17 @@ void display_ui_set_db_range(int range_db)
     if (range_db > 120) range_db = 120;
     s_last_db_range = range_db;
     screen_spectrum_set_db_range(range_db);
+}
+
+void display_ui_set_cal_enabled(bool enabled)
+{
+    s_last_cal_enabled = enabled;
+    dsp_engine_set_cal_enabled(enabled);
+}
+
+void display_ui_set_cal_file(const char *name)
+{
+    strlcpy(s_last_cal_file, name ? name : "", sizeof(s_last_cal_file));
 }
 
 void display_ui_set_ambient_margin(float margin)
@@ -197,7 +214,9 @@ void display_ui_notify_color_scheme(color_scheme_t scheme)
                      .screen_brightness       = s_last_brightness,
                      .db_range                = s_last_db_range,
                      .display_mode            = s_last_disp_mode,
-                     .ambient_margin          = s_last_amb_margin };
+                     .ambient_margin          = s_last_amb_margin,
+                     .cal_enabled             = s_last_cal_enabled };
+    strlcpy(s.cal_file, s_last_cal_file, sizeof(s.cal_file));
     settings_mgr_save(&s);
 }
 

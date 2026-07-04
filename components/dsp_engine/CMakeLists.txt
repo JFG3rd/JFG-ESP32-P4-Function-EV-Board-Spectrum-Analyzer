@@ -5,6 +5,7 @@ idf_component_register(
         "src/fft_processor.c"
         "src/spl_meter.c"
         "src/averaging.c"
+        "src/calibration.c"
     INCLUDE_DIRS
         "include"
     PRIV_INCLUDE_DIRS

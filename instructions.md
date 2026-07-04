@@ -266,6 +266,22 @@ Flip the switch on and the **◉ Ambient NF live** indicator appears in the stat
 
 ---
 
+### Mic Calibration
+
+**What it does:** Corrects for your microphone's frequency response using its calibration file, making the spectrum accurate across the whole range.
+
+Measurement mics like the miniDSP UMIK-1 ship with a unique calibration file (download it from minidsp.com by entering the mic's serial number — use the plain 0° version). The file lists how many dB the mic deviates from flat at each frequency; the analyzer subtracts that deviation from every FFT bin.
+
+**Setup:**
+1. On a computer, copy the calibration file (`.txt`, `.csv`, or `.cal`) to the SD card folder `/spectrum/cal/`
+2. Insert the card, go to Settings → **MIC CALIBRATION** → **Load File**
+3. Pick the file and tap **Load** — it's applied immediately, switched On, and remembered across power cycles
+4. **Mic Cal: Off/On** toggles the correction without unloading the file; **Clear** forgets it
+
+The status line shows the loaded file and how many correction points it contains. The correction adapts automatically when you change FFT size or when the sample rate changes (USB vs. built-in mic). Invalid or corrupted files are rejected safely.
+
+---
+
 ## SD Card — Settings and Presets
 
 ### Automatic saving

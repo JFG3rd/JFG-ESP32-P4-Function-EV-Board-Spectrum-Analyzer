@@ -36,8 +36,9 @@ esp_err_t settings_mgr_init(void)
     esp_err_t err = bsp_sdcard_mount();
     if (err == ESP_OK) {
         s_sd_mounted = true;
-        /* Ensure the app directory exists */
+        /* Ensure the app directories exist */
         mkdir(SD_DIR, 0777);
+        mkdir(SETTINGS_CAL_DIR, 0777);
         ESP_LOGI(TAG, "SD card mounted at /sdcard");
     } else {
         s_sd_mounted = false;
@@ -87,6 +88,8 @@ static char *_settings_to_json(const settings_t *cfg)
     cJSON_AddNumberToObject(root, "db_range",                   cfg->db_range);
     cJSON_AddNumberToObject(root, "display_mode",               cfg->display_mode);
     cJSON_AddNumberToObject(root, "ambient_margin",             (double)cfg->ambient_margin);
+    cJSON_AddBoolToObject  (root, "cal_enabled",                cfg->cal_enabled);
+    cJSON_AddStringToObject(root, "cal_file",                   cfg->cal_file);
 
     char *str = cJSON_Print(root);
     cJSON_Delete(root);
@@ -126,6 +129,10 @@ static bool _json_to_settings(const char *json_str, settings_t *out)
     GET_INT ("db_range",                 db_range);
     GET_INT ("display_mode",             display_mode);
     GET_FLT ("ambient_margin",           ambient_margin);
+    GET_BOOL("cal_enabled",              cal_enabled);
+    if ((item = cJSON_GetObjectItem(root, "cal_file")) && cJSON_IsString(item) &&
+        item->valuestring != NULL)
+        strlcpy(out->cal_file, item->valuestring, sizeof(out->cal_file));
 
 #undef GET_INT
 #undef GET_FLT
@@ -276,6 +283,11 @@ static void settings_sanitize(settings_t *s)
     s->screen_brightness       = _clampi(s->screen_brightness, 10, 100, 100);
     s->db_range                = _clampi(s->db_range, 60, 120, 120);
     s->ambient_margin          = _clampf(s->ambient_margin, 1.0f, 4.0f, 1.5f);
+
+    /* cal_file: force termination; a path separator means tampering */
+    s->cal_file[sizeof(s->cal_file) - 1] = '\0';
+    if (strchr(s->cal_file, '/') || strchr(s->cal_file, '\\'))
+        s->cal_file[0] = '\0';
 }
 
 static void _set_defaults(settings_t *out)
@@ -292,6 +304,8 @@ static void _set_defaults(settings_t *out)
     out->db_range                 = 120;    /* full -120…0 dB span */
     out->display_mode             = DISPLAY_MODE_BARS;
     out->ambient_margin           = 1.5f;
+    out->cal_enabled              = false;
+    out->cal_file[0]              = '\0';
 }
 
 esp_err_t settings_mgr_load(settings_t *out)
@@ -483,6 +497,31 @@ int settings_mgr_list_named(char names[][SETTINGS_NAME_MAX], int max_count)
     return count;
 }
 
+int settings_mgr_list_cal_files(char names[][SETTINGS_NAME_MAX], int max_count)
+{
+    if (!names || max_count <= 0) return -1;
+    if (!s_sd_mounted)            return 0;
+
+    DIR *dir = opendir(SETTINGS_CAL_DIR);
+    if (!dir) return 0;
+
+    int count = 0;
+    struct dirent *ent;
+    while (count < max_count && (ent = readdir(dir)) != NULL) {
+        const char *fn  = ent->d_name;
+        size_t      len = strlen(fn);
+        if (len < 5 || len >= SETTINGS_NAME_MAX) continue;   /* "x.txt" min; keep ext */
+        const char *ext = fn + len - 4;
+        if (strcasecmp(ext, ".txt") != 0 && strcasecmp(ext, ".csv") != 0 &&
+            strcasecmp(ext, ".cal") != 0)
+            continue;
+        memcpy(names[count], fn, len + 1);   /* extension kept */
+        count++;
+    }
+    closedir(dir);
+    return count;
+}
+
 /* ── noise floor binary on SD ─────────────────────────────────── */
 
 typedef struct {
@@ -543,6 +582,7 @@ esp_err_t settings_mgr_retry_sd(void)
     if (err == ESP_OK) {
         s_sd_mounted = true;
         mkdir(SD_DIR, 0777);
+        mkdir(SETTINGS_CAL_DIR, 0777);
         ESP_LOGI(TAG, "SD card mounted (retry)");
     } else {
         ESP_LOGI(TAG, "SD retry failed: %s", esp_err_to_name(err));

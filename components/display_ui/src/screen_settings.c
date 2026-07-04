@@ -46,6 +46,9 @@ static lv_obj_t *s_dd_peak_decay;
 static lv_obj_t *s_dd_db_range;
 static lv_obj_t *s_dd_disp_mode;
 static lv_obj_t *s_dd_amb_strength;
+static lv_obj_t *s_dd_cal_enable;
+static lv_obj_t *s_lbl_cal_status;
+static char      s_cal_file_name[32] = "";
 static lv_obj_t *s_dd_fft;
 static lv_obj_t *s_dd_window;
 static lv_obj_t *s_dd_avg;
@@ -223,6 +226,7 @@ static void apply_settings(void)
     display_ui_set_db_range(db_range_index_to_db(lv_dropdown_get_selected(s_dd_db_range)));
     display_ui_set_display_mode((int)lv_dropdown_get_selected(s_dd_disp_mode));
     display_ui_set_ambient_margin(amb_strength_index_to_margin(lv_dropdown_get_selected(s_dd_amb_strength)));
+    display_ui_set_cal_enabled(lv_dropdown_get_selected(s_dd_cal_enable) == 1);
 
     read_dsp_widgets(&s_cur_cfg, &s_cur_gain_db);
 
@@ -289,6 +293,57 @@ static void ambient_switch_cb(lv_event_t *e)
     dsp_engine_set_ambient_noise(enabled);
     display_ui_set_ambient_status(enabled);
     /* Immediate save so state persists on next boot */
+    settings_t s;
+    screen_settings_collect(&s);
+    settings_mgr_save(&s);
+}
+
+/* ── mic calibration ──────────────────────────────────────────── */
+
+static void update_cal_status_label(void)
+{
+    if (!s_lbl_cal_status) return;
+    if (s_cal_file_name[0] && dsp_engine_cal_loaded()) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%s (%d pts)", s_cal_file_name, dsp_engine_cal_points());
+        lv_label_set_text(s_lbl_cal_status, buf);
+    } else {
+        lv_label_set_text(s_lbl_cal_status, "No calibration loaded");
+    }
+}
+
+static void cal_load_btn_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if (!settings_mgr_sd_available()) {
+        lv_label_set_text(s_lbl_cal_status, "SD: Not found");
+        return;
+    }
+    screen_calfiles_show();
+}
+
+static void cal_clear_btn_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    dsp_engine_clear_calibration();
+    s_cal_file_name[0] = '\0';
+    lv_dropdown_set_selected(s_dd_cal_enable, 0);
+    display_ui_set_cal_file("");
+    display_ui_set_cal_enabled(false);
+    update_cal_status_label();
+    settings_t s;
+    screen_settings_collect(&s);
+    settings_mgr_save(&s);
+}
+
+/* Called by the cal file picker after a successful load */
+void screen_settings_set_cal_file(const char *name)
+{
+    strlcpy(s_cal_file_name, name ? name : "", sizeof(s_cal_file_name));
+    lv_dropdown_set_selected(s_dd_cal_enable, 1);   /* loading implies enable */
+    display_ui_set_cal_file(s_cal_file_name);
+    display_ui_set_cal_enabled(true);
+    update_cal_status_label();
     settings_t s;
     screen_settings_collect(&s);
     settings_mgr_save(&s);
@@ -522,6 +577,31 @@ esp_err_t screen_settings_create(settings_changed_cb_t cb, void *ctx,
 
 #undef MAKE_SD_BTN
 
+    /* Mic calibration — file from /sdcard/spectrum/cal, applied per-bin */
+    make_group_header(s_screen, "MIC CALIBRATION", 540, 430);
+    s_dd_cal_enable = make_labeled_dropdown_r(s_screen, "Mic Cal:", "Off\nOn", 456);
+
+    s_lbl_cal_status = lv_label_create(s_screen);
+    lv_label_set_text(s_lbl_cal_status, "No calibration loaded");
+    lv_obj_set_style_text_color(s_lbl_cal_status, lv_color_hex(0x88AACC), 0);
+    lv_obj_set_style_text_font(s_lbl_cal_status, &lv_font_montserrat_12, 0);
+    lv_obj_set_pos(s_lbl_cal_status, 540, 500);
+
+#define MAKE_CAL_BTN(label_str, cb, x_pos, w_px) do { \
+    lv_obj_t *_b = lv_button_create(s_screen);        \
+    lv_obj_set_size(_b, w_px, 28);                    \
+    lv_obj_set_pos(_b, x_pos, 522);                   \
+    lv_obj_add_event_cb(_b, cb, LV_EVENT_CLICKED, NULL); \
+    lv_obj_t *_l = lv_label_create(_b);               \
+    lv_label_set_text(_l, label_str);                  \
+    lv_obj_center(_l);                                 \
+} while(0)
+
+    MAKE_CAL_BTN("Load File", cal_load_btn_cb, 540, 110);
+    MAKE_CAL_BTN("Clear",     cal_clear_btn_cb, 658, 80);
+
+#undef MAKE_CAL_BTN
+
     /* Back button — applies all pending changes, spans the first column */
     lv_obj_t *back_btn = lv_button_create(s_screen);
     lv_obj_set_size(back_btn, 360, 40);
@@ -553,6 +633,8 @@ void screen_settings_collect(settings_t *out)
     out->db_range                = db_range_index_to_db(lv_dropdown_get_selected(s_dd_db_range));
     out->display_mode            = (int)lv_dropdown_get_selected(s_dd_disp_mode);
     out->ambient_margin          = amb_strength_index_to_margin(lv_dropdown_get_selected(s_dd_amb_strength));
+    out->cal_enabled             = (lv_dropdown_get_selected(s_dd_cal_enable) == 1);
+    strlcpy(out->cal_file, s_cal_file_name, sizeof(out->cal_file));
 }
 
 /* Update every widget + s_cur_cfg from cfg WITHOUT firing the changed
@@ -578,6 +660,9 @@ void screen_settings_sync_from(const settings_t *cfg)
         (cfg->display_mode >= 0 && cfg->display_mode < DISPLAY_MODE_COUNT)
             ? (uint16_t)cfg->display_mode : DISPLAY_MODE_BARS);
     lv_dropdown_set_selected(s_dd_amb_strength, amb_margin_to_index(cfg->ambient_margin));
+    lv_dropdown_set_selected(s_dd_cal_enable,   cfg->cal_enabled ? 1 : 0);
+    strlcpy(s_cal_file_name, cfg->cal_file, sizeof(s_cal_file_name));
+    update_cal_status_label();
 
     if (cfg->ambient_noise_enabled) lv_obj_add_state(s_sw_ambient, LV_STATE_CHECKED);
     else                            lv_obj_remove_state(s_sw_ambient, LV_STATE_CHECKED);
@@ -650,5 +735,6 @@ void screen_settings_load(void)
         lv_label_set_text(s_lbl_sd_status,
                           settings_mgr_sd_available() ? "SD: Ready" : "SD: Not found (NVS backup)");
     }
+    update_cal_status_label();
     lv_screen_load(s_screen);
 }

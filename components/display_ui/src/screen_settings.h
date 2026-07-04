@@ -29,3 +29,7 @@ void      screen_settings_sync_brightness(int percent);
 
 /* Gray out the mic-gain dropdown while a USB mic is the active source. */
 void      screen_settings_set_usb_active(bool usb_active);
+
+/* Called by the cal file picker after dsp_engine_load_calibration()
+ * succeeded: records the name, enables the correction, persists. */
+void      screen_settings_set_cal_file(const char *name);

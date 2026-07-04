@@ -12,6 +12,7 @@
  *   7. Start audio capture
  */
 
+#include <stdio.h>
 #include "nvs_flash.h"
 #include "esp_log.h"
 #include "esp_err.h"
@@ -99,6 +100,8 @@ void app_main(void)
     display_ui_set_db_range(loaded.db_range);                      /* restore display dB range  */
     display_ui_set_display_mode(loaded.display_mode);              /* restore display mode      */
     display_ui_set_ambient_margin(loaded.ambient_margin);         /* restore ambient strength  */
+    display_ui_set_cal_file(loaded.cal_file);                     /* track mic cal state       */
+    display_ui_set_cal_enabled(loaded.cal_enabled);
     display_ui_sync_settings(&loaded);   /* sync settings-screen widgets so Back won't revert */
     display_ui_unlock();
 
@@ -106,6 +109,16 @@ void app_main(void)
     ESP_LOGI(TAG, "Step 4: dsp_engine_init");
     ESP_ERROR_CHECK(dsp_engine_init(&loaded.dsp));
     if (loaded.ambient_noise_enabled) dsp_engine_set_ambient_noise(true);
+
+    /* Restore mic calibration from SD (per-bin correction, Phase 2 M2) */
+    if (loaded.cal_file[0] != '\0') {
+        char cal_path[sizeof(SETTINGS_CAL_DIR) + sizeof(loaded.cal_file) + 2];
+        snprintf(cal_path, sizeof(cal_path), SETTINGS_CAL_DIR "/%s", loaded.cal_file);
+        if (dsp_engine_load_calibration(cal_path) == ESP_OK)
+            ESP_LOGI(TAG, "mic calibration restored: %s", loaded.cal_file);
+        else
+            ESP_LOGW(TAG, "mic calibration '%s' failed to load", loaded.cal_file);
+    }
 
     /* 5. Register display as DSP consumer */
     ESP_ERROR_CHECK(dsp_engine_register_consumer(dsp_to_display, NULL));

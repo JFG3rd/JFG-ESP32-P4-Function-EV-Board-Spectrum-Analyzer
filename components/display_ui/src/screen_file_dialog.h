@@ -11,3 +11,6 @@ void screen_saveas_show(void);
 
 /* Open the preset file browser (Load / Rename / Delete). */
 void screen_files_show(void);
+
+/* Open the mic calibration file picker (/sdcard/spectrum/cal). */
+void screen_calfiles_show(void);

@@ -73,6 +73,17 @@ void      dsp_engine_deinit(void);
  * The frequency table is rebuilt at the next frame boundary. */
 void      dsp_engine_set_sample_rate(uint32_t sample_rate_hz);
 
+/* ── microphone calibration (Phase 2 M2) ──────────────────────────
+ * Load a calibration file (miniDSP UMIK-1 .txt or generic freq/dB CSV)
+ * from a filesystem path. The per-bin correction is subtracted from the
+ * spectrum right after the FFT when enabled, and the table follows FFT
+ * size / sample-rate changes automatically. */
+esp_err_t dsp_engine_load_calibration(const char *path);
+void      dsp_engine_clear_calibration(void);
+void      dsp_engine_set_cal_enabled(bool enabled);
+bool      dsp_engine_cal_loaded(void);
+int       dsp_engine_cal_points(void);
+
 /* Tell the engine the microphone itself changed (I2S <-> USB hot-swap).
  * source_id: 0 = I2S, 1 = USB (audio_source_type_t values). The noise
  * floor baseline is tagged with the source it was captured on: it is

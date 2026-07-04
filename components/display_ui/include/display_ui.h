@@ -54,6 +54,11 @@ void      display_ui_set_display_mode(int mode);
 /* Ambient subtraction strength (margin x estimate, 1.0-4.0). */
 void      display_ui_set_ambient_margin(float margin);
 
+/* Mic calibration state tracking (persistence + DSP enable). The file
+ * itself is loaded via dsp_engine_load_calibration by the caller. */
+void      display_ui_set_cal_enabled(bool enabled);
+void      display_ui_set_cal_file(const char *name);
+
 /* Feed raw audio samples to the oscilloscope view (no-op unless active).
  * Safe to call from the audio reader task. */
 void      display_ui_push_waveform(const int16_t *samples, size_t count);

@@ -16,6 +16,7 @@
 #include "fft_processor.h"
 #include "spl_meter.h"
 #include "averaging.h"
+#include "calibration.h"
 
 static const char *TAG = "dsp_engine";
 
@@ -70,6 +71,12 @@ static uint32_t  s_noise_capture_count;
  * Without it, acoustic room noise — which varies far more per frame than
  * codec self-noise — constantly pokes through the subtraction. */
 #define NF_MARGIN  1.2f
+
+/* ── microphone calibration (Phase 2 M2) ──────────────────────── */
+static float        *s_cal_db;         /* PSRAM [BINS_MAX] — per-bin response */
+static volatile bool s_cal_enabled;
+static bool          s_cal_valid;      /* table matches current fft/rate */
+static volatile bool s_cal_dirty;      /* file (re)loaded — rebuild table */
 
 /* ── live ambient noise subtraction state ─────────────────────── */
 /* Operates independently of the static noise floor feature above.
@@ -248,6 +255,16 @@ static void dsp_task(void *arg)
                 }
                 ESP_LOGI(TAG, "FFT %lu @ %lu Hz", fft_size, rate);
             }
+
+            /* Mic calibration table follows the bin layout */
+            if (size_changed || rate_changed || s_cal_dirty) {
+                s_cal_dirty = false;
+                s_cal_valid = calibration_loaded();
+                calibration_build_table(s_cal_db, bin_count, fft_size, rate);
+                if (s_cal_valid)
+                    ESP_LOGI(TAG, "mic calibration table rebuilt (%d points)",
+                             calibration_point_count());
+            }
         }
         /* Pull up to (hop_size - accum_pos) samples from ring buffer */
         size_t want_bytes = (hop_size - accum_pos) * sizeof(int16_t);
@@ -280,6 +297,14 @@ static void dsp_task(void *arg)
         if (fft_processor_process(s_windowed, fft_size, s_magnitude_db,
                                    bin_count, norm_factor) != ESP_OK)
             continue;
+
+        /* Mic calibration FIRST: subtract the mic's response deviation so
+         * everything downstream (noise capture/subtraction, averaging, SPL)
+         * operates on the corrected spectrum. */
+        if (s_cal_enabled && s_cal_valid) {
+            for (uint32_t k = 0; k < bin_count; k++)
+                s_magnitude_db[k] -= s_cal_db[k];
+        }
 
         /* Noise floor capture — accumulate the running mean in linear POWER,
          * not dB. A mean of dB values is a geometric mean of power, which is
@@ -428,10 +453,12 @@ esp_err_t dsp_engine_init(const dsp_config_t *cfg)
     s_noise_floor_db  = heap_caps_calloc(BINS_MAX, sizeof(float), MALLOC_CAP_SPIRAM);
     s_noise_accum     = heap_caps_calloc(BINS_MAX, sizeof(float), MALLOC_CAP_SPIRAM);
     s_ambient_power   = heap_caps_calloc(BINS_MAX, sizeof(float), MALLOC_CAP_SPIRAM);
+    s_cal_db          = heap_caps_calloc(BINS_MAX, sizeof(float), MALLOC_CAP_SPIRAM);
 
     ESP_RETURN_ON_FALSE(s_window_coeffs && s_overlap_buf && s_windowed &&
                         s_magnitude_db  && s_frequency_hz &&
-                        s_noise_floor_db && s_noise_accum && s_ambient_power,
+                        s_noise_floor_db && s_noise_accum && s_ambient_power &&
+                        s_cal_db,
                         ESP_ERR_NO_MEM, TAG, "PSRAM allocation failed");
 
     /* Window coefficients */
@@ -489,6 +516,43 @@ esp_err_t dsp_engine_register_consumer(dsp_consumer_cb_t cb, void *ctx)
     s_consumers[s_num_consumers].ctx = ctx;
     s_num_consumers++;
     return ESP_OK;
+}
+
+/* ── microphone calibration public API ────────────────────────── */
+
+esp_err_t dsp_engine_load_calibration(const char *path)
+{
+    esp_err_t err = calibration_parse_file(path);
+    if (err != ESP_OK) return err;
+    s_cal_dirty = true;
+    portENTER_CRITICAL(&s_cfg_mux);
+    s_cfg_gen++;   /* task rebuilds the table at the next frame boundary */
+    portEXIT_CRITICAL(&s_cfg_mux);
+    return ESP_OK;
+}
+
+void dsp_engine_clear_calibration(void)
+{
+    calibration_clear();
+    s_cal_dirty = true;
+    portENTER_CRITICAL(&s_cfg_mux);
+    s_cfg_gen++;
+    portEXIT_CRITICAL(&s_cfg_mux);
+}
+
+void dsp_engine_set_cal_enabled(bool enabled)
+{
+    s_cal_enabled = enabled;
+}
+
+bool dsp_engine_cal_loaded(void)
+{
+    return calibration_loaded();
+}
+
+int dsp_engine_cal_points(void)
+{
+    return calibration_point_count();
 }
 
 void dsp_engine_notify_source_changed(int source_id)

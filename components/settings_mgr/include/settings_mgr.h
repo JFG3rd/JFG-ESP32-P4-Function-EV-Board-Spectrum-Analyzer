@@ -48,7 +48,12 @@ typedef struct {
     int            db_range;            /* display dB span: 60/80/100/120 dB           */
     int            display_mode;        /* display_mode_t: bars/line/RTA/...           */
     float          ambient_margin;      /* ambient subtraction strength: 1.1/1.5/2.5   */
+    bool           cal_enabled;         /* apply mic calibration correction            */
+    char           cal_file[32];        /* cal filename in /sdcard/spectrum/cal/       */
 } settings_t;
+
+/* Directory for microphone calibration files on the SD card */
+#define SETTINGS_CAL_DIR "/sdcard/spectrum/cal"
 
 /**
  * @brief Initialise the settings manager and mount the SD card if present.
@@ -94,6 +99,12 @@ esp_err_t settings_mgr_rename_named(const char *old_name, const char *new_name);
  * @return count of entries filled (0 if none/no SD), or -1 on error.
  */
 int settings_mgr_list_named(char names[][SETTINGS_NAME_MAX], int max_count);
+
+/**
+ * @brief List mic calibration files (.txt/.csv/.cal, extension kept) in
+ *        SETTINGS_CAL_DIR. Returns count filled, 0 if none/no SD.
+ */
+int settings_mgr_list_cal_files(char names[][SETTINGS_NAME_MAX], int max_count);
 
 /**
  * @brief Save the DSP engine's noise floor binary to the SD card.
