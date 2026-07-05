@@ -3,6 +3,7 @@ idf_component_register(
         "src/display_ui.c"
         "src/display_init.c"
         "src/screen_spectrum.c"
+        "src/touch_gesture.c"
         "src/screen_settings.c"
         "src/screen_file_dialog.c"
         "src/screen_splash.c"

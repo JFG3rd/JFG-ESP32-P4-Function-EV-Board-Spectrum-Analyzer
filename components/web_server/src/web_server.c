@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include "esp_log.h"
 #include "esp_check.h"
+#include "esp_timer.h"
 #include "esp_http_server.h"
 #include "esp_heap_caps.h"
 #include "esp_app_desc.h"
@@ -25,8 +26,19 @@ static const char *TAG = "web_server";
 
 #define SAVEWIFI_MAX_BODY   256
 #define UPLOAD_MAX_BODY     (128 * 1024)   /* matches the cal parser's limit */
+#define SAVEWIFI_MIN_INTERVAL_US  (500 * 1000)
+#define UPLOAD_MIN_INTERVAL_US    (1000 * 1000)
 
 static httpd_handle_t s_server;
+static int64_t s_last_savewifi_us;
+static int64_t s_last_upload_us;
+
+static esp_err_t send_too_many_requests(httpd_req_t *req, const char *msg)
+{
+    httpd_resp_set_status(req, "429 Too Many Requests");
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, msg ? msg : "Too many requests");
+}
 
 /* ── embedded assets (generated from web/ by tools/gen_web_assets.py) ── */
 #include "web_assets.h"
@@ -80,9 +92,13 @@ static esp_err_t scan_results_get(httpd_req_t *req)
 
 static esp_err_t save_wifi_post(httpd_req_t *req)
 {
+    int64_t now = esp_timer_get_time();
+    if (now - s_last_savewifi_us < SAVEWIFI_MIN_INTERVAL_US) {
+        return send_too_many_requests(req, "Too many requests");
+    }
+
     if (req->content_len == 0 || req->content_len > SAVEWIFI_MAX_BODY) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad body size");
-        return ESP_FAIL;
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad body size");
     }
     char body[SAVEWIFI_MAX_BODY + 1];
     int got = 0;
@@ -95,8 +111,7 @@ static esp_err_t save_wifi_post(httpd_req_t *req)
 
     cJSON *root = cJSON_Parse(body);
     if (!root) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad JSON");
-        return ESP_FAIL;
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Bad JSON");
     }
     const cJSON *ssid = cJSON_GetObjectItem(root, "ssid");
     const cJSON *pass = cJSON_GetObjectItem(root, "password");
@@ -107,9 +122,9 @@ static esp_err_t save_wifi_post(httpd_req_t *req)
     cJSON_Delete(root);
 
     if (err != ESP_OK) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid credentials");
-        return ESP_FAIL;
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid credentials");
     }
+    s_last_savewifi_us = now;
     httpd_resp_set_type(req, "text/plain");
     return httpd_resp_sendstr(req, "WiFi credentials saved.");
 }
@@ -141,33 +156,47 @@ static bool cal_name_ok(const char *name)
            strcasecmp(ext, ".cal") == 0;
 }
 
+static bool query_get_name(httpd_req_t *req, char *out, size_t out_len)
+{
+    char query[128];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK)
+        return false;
+    if (httpd_query_key_value(query, "name", out, out_len) != ESP_OK)
+        return false;
+    url_decode(out);
+    return out[0] != '\0';
+}
+
 static esp_err_t upload_cal_post(httpd_req_t *req)
 {
-    if (!settings_mgr_sd_available()) {
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No SD card");
-        return ESP_FAIL;
-    }
-    if (req->content_len == 0 || req->content_len > UPLOAD_MAX_BODY) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "File empty or larger than 128 KB");
-        return ESP_FAIL;
+    int64_t now = esp_timer_get_time();
+    if (now - s_last_upload_us < UPLOAD_MIN_INTERVAL_US) {
+        return send_too_many_requests(req, "Too many requests");
     }
 
-    /* Filename from the X-Filename header (URL-encoded by the page).
-     * NOT a query string: httpd's default URI matcher compares the full
-     * request target, so "/uploadCal?name=x" would 404 against the
-     * registered "/uploadCal". */
-    char name[64] = "";
-    if (httpd_req_get_hdr_value_str(req, "X-Filename", name, sizeof(name)) != ESP_OK ||
-        name[0] == '\0') {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing X-Filename header");
-        return ESP_FAIL;
+    if (!settings_mgr_sd_available()) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No SD card");
     }
-    url_decode(name);
+    if (req->content_len == 0 || req->content_len > UPLOAD_MAX_BODY) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                   "File empty or larger than 128 KB");
+    }
+
+    /* Filename from query string (?name=...) for compatibility with docs,
+     * falling back to X-Filename header used by current web page. */
+    char name[64] = "";
+    bool have_name = query_get_name(req, name, sizeof(name));
+    if (!have_name) {
+        if (httpd_req_get_hdr_value_str(req, "X-Filename", name, sizeof(name)) != ESP_OK ||
+            name[0] == '\0') {
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                       "Missing filename (?name=... or X-Filename)");
+        }
+        url_decode(name);
+    }
     if (!cal_name_ok(name)) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "Name must be 1-27 chars + .txt/.csv/.cal, no path characters");
-        return ESP_FAIL;
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                   "Name must be 1-27 chars + .txt/.csv/.cal, no path characters");
     }
 
     /* buffer the body in PSRAM */
@@ -189,16 +218,14 @@ static esp_err_t upload_cal_post(httpd_req_t *req)
     heap_caps_free(buf);
     if (!wok) {
         unlink(tmp);
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "SD write failed");
-        return ESP_FAIL;
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "SD write failed");
     }
 
     esp_err_t err = dsp_engine_load_calibration(tmp);
     if (err != ESP_OK) {
         unlink(tmp);   /* previously loaded calibration is untouched */
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "Not a valid calibration file (freq/dB pairs, ascending, <=2048 points)");
-        return ESP_FAIL;
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                   "Not a valid calibration file (freq/dB pairs, ascending, <=2048 points)");
     }
 
     char path[sizeof(SETTINGS_CAL_DIR) + 64];
@@ -218,6 +245,7 @@ static esp_err_t upload_cal_post(httpd_req_t *req)
     snprintf(msg, sizeof(msg),
              "{\"ok\":true,\"file\":\"%s\",\"points\":%d}", name, dsp_engine_cal_points());
     httpd_resp_set_type(req, "application/json");
+    s_last_upload_us = now;
     ESP_LOGI(TAG, "calibration uploaded: %s (%d points)", name, dsp_engine_cal_points());
     return httpd_resp_sendstr(req, msg);
 }
@@ -253,7 +281,7 @@ esp_err_t web_server_start(void)
     if (s_server) return ESP_OK;
 
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_open_sockets  = 4;
+    cfg.max_open_sockets  = 7;
     cfg.max_uri_handlers  = 16;   /* default 8 silently drops routes past #8 */
     cfg.stack_size        = 6144;
     cfg.lru_purge_enable  = true;
@@ -272,8 +300,14 @@ esp_err_t web_server_start(void)
         { .uri = "/uploadCal",       .method = HTTP_POST, .handler = upload_cal_post },
         { .uri = "/api/status",      .method = HTTP_GET,  .handler = status_get },
     };
-    for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++)
-        httpd_register_uri_handler(s_server, &uris[i]);
+    for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
+        esp_err_t err = httpd_register_uri_handler(s_server, &uris[i]);
+        if (err != ESP_OK) {
+            httpd_stop(s_server);
+            s_server = NULL;
+            ESP_RETURN_ON_ERROR(err, TAG, "uri handler registration failed");
+        }
+    }
 
     ESP_LOGI(TAG, "web server up (%u routes)", (unsigned)(sizeof(uris) / sizeof(uris[0])));
     return ESP_OK;

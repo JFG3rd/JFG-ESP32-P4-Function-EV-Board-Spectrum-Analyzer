@@ -24,9 +24,9 @@
 #include "esp_lcd_touch_gt911.h"
 #include "esp_lvgl_port.h"
 #include "esp_lvgl_port_disp.h"
-#include "esp_lvgl_port_touch.h"
 #include "lvgl.h"
 #include "display_init.h"
+#include "touch_gesture.h"
 
 static const char *TAG = "display_init";
 
@@ -218,9 +218,11 @@ esp_err_t display_hw_init(lv_display_t **disp_out)
             touch_err = esp_lcd_touch_new_i2c_gt911(tp_io, &tp_cfg, &tp);
 
             if (touch_err == ESP_OK) {
-                const lvgl_port_touch_cfg_t lvgl_touch_cfg = { .disp = disp, .handle = tp };
-                if (lvgl_port_add_touch(&lvgl_touch_cfg) == NULL)
-                    ESP_LOGW(TAG, "lvgl_port_add_touch failed; touch input disabled");
+                /* Multi-touch indev (touch_gesture.c) instead of
+                 * lvgl_port_add_touch(): the port's read callback only
+                 * reports one contact, so pinch gestures never fire. */
+                if (touch_gesture_add_indev(disp, tp) == NULL)
+                    ESP_LOGW(TAG, "touch_gesture_add_indev failed; touch input disabled");
             } else {
                 ESP_LOGW(TAG, "esp_lcd_touch_new_i2c_gt911 failed: %s; touch input disabled",
                          esp_err_to_name(touch_err));

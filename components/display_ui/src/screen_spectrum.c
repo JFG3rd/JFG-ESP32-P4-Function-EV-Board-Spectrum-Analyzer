@@ -27,6 +27,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "lvgl.h"
+#include "src/indev/lv_indev_private.h"
 #include "dsp_engine.h"
 #include "screen_spectrum.h"
 #include "screen_settings.h"
@@ -48,6 +49,21 @@ static const char *TAG = "scr_spectrum";
 #define BAR_GAP_PX        2   /* visible gap between bars */
 #define DB_MIN       -120.0f
 #define DB_MAX          0.0f
+#define FREQ_TICK_COUNT   5
+#define FREQ_ZOOM_MIN    20.0f
+#define FREQ_ZOOM_MAX 20000.0f
+#define DB_ZOOM_MIN     -120.0f
+#define DB_ZOOM_MAX        0.0f
+
+/* ── oscilloscope view ────────────────────────────────────────────
+ * WAVE_N: waveform ring buffer length (PSRAM, alloc'd in create()).
+ * At 48 kHz the buffer holds ~341 ms; the visible window is
+ * SCREEN_W × samples-per-pixel wide. */
+#define WAVE_N          16384
+#define SCOPE_SPP_MIN    0.25f                            /* zoom in: 4 px per sample */
+#define SCOPE_SPP_MAX  ((float)WAVE_N / (float)SCREEN_W)  /* zoom out: whole buffer */
+#define SCOPE_GAIN_MIN   0.25f
+#define SCOPE_GAIN_MAX 512.0f
 
 /* ── colour palettes ──────────────────────────────────────────── */
 typedef struct {
@@ -86,16 +102,268 @@ static SemaphoreHandle_t s_data_mutex;
 /* ── display mode ─────────────────────────────────────────────── */
 static display_mode_t s_mode = DISPLAY_MODE_BARS;
 
-/* ── display dB range (bar travel height) ─────────────────────────
- * The bottom of the screen is always DB_MIN (-120 dB, silence); the
- * TOP of the scale is s_db_max = DB_MIN + range. A smaller range
- * lowers the top (e.g. 60 dB → -120…-60), so the same signal fills a
- * larger fraction of the height — bars travel higher. */
-static float s_db_max = DB_MAX;
+/* ── interactive view range ───────────────────────────────────────
+ * These are runtime-only zoom/pan targets for the spectrum display.
+ * The settings screen still owns the persisted display dB range; pinch
+ * gestures temporarily override the on-screen view. */
+static float s_freq_view_min = FREQ_ZOOM_MIN;
+static float s_freq_view_max = FREQ_ZOOM_MAX;
+static float s_db_view_max   = DB_ZOOM_MAX;
+
+/* Scope view: horizontal pinch sets the time base (samples per pixel),
+ * vertical pinch sets the gain. Gain starts in auto mode (scale to the
+ * loudest sample in the window); the first vertical pinch switches to
+ * manual, seeded from the auto gain in effect at that moment. */
+static float s_scope_spp         = 1.0f;
+static float s_scope_gain        = 1.0f;   /* manual gain (when s_scope_gain_manual) */
+static float s_scope_gain_active = 1.0f;   /* gain actually used by the last frame */
+static bool  s_scope_gain_manual = false;
+
+typedef enum {
+    ZOOM_AXIS_NONE = 0,
+    ZOOM_AXIS_FREQ,
+    ZOOM_AXIS_DB,
+} zoom_axis_t;
+
+static zoom_axis_t s_zoom_axis = ZOOM_AXIS_NONE;
+static float s_zoom_base_freq_min = FREQ_ZOOM_MIN;
+static float s_zoom_base_freq_max = FREQ_ZOOM_MAX;
+static float s_zoom_base_db_max   = DB_MAX;
+static float s_zoom_base_spp      = 1.0f;
+static float s_zoom_base_gain     = 1.0f;
+static lv_point_t s_zoom_center_pt = {0, 0};
+static bool s_zoom_active = false;
+
+static lv_obj_t *s_screen;
+static lv_obj_t *s_spectrum_obj;
+static lv_obj_t *s_lbl_spl;
+static lv_obj_t *s_lbl_peak;
+static lv_obj_t *s_lbl_dsp_info;
+static lv_obj_t *s_lbl_ambient_status;
+static lv_obj_t *s_lbl_source_status;   /* "USB MIC" when the UAC1 mic is live */
+static lv_obj_t *s_btn_pk_lbl;         /* peak hold toggle button label */
+static lv_obj_t *s_btn_mx_lbl;         /* max hold toggle button label */
+static lv_obj_t *s_btn_rst;            /* reset max hold button */
+static lv_obj_t *s_lbl_vu_spl;         /* VU mode: big SPL readout */
+static lv_obj_t *s_lbl_vu_peak;        /* VU mode: big peak readout */
+static lv_obj_t *s_lbl_scope_hud;      /* SCOPE mode: pinch axis + window/gain readout */
+
+static lv_obj_t *s_freq_ticks[FREQ_TICK_COUNT];
+
+static float clampf_local(float v, float lo, float hi)
+{
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+}
+
+static void reset_view_ranges(void)
+{
+    s_freq_view_min = FREQ_ZOOM_MIN;
+    s_freq_view_max = FREQ_ZOOM_MAX;
+    s_db_view_max   = DB_ZOOM_MAX;
+    s_scope_spp         = 1.0f;
+    s_scope_gain        = 1.0f;
+    s_scope_gain_manual = false;
+}
+
+static float freq_x_frac(float freq)
+{
+    float min_f = s_freq_view_min;
+    float max_f = s_freq_view_max;
+    if (max_f <= min_f) return 0.0f;
+    if (freq <= min_f) return 0.0f;
+    if (freq >= max_f) return 1.0f;
+    return log10f(freq / min_f) / log10f(max_f / min_f);
+}
+
+static float x_to_freq_frac(float frac)
+{
+    if (frac < 0.0f) frac = 0.0f;
+    if (frac > 1.0f) frac = 1.0f;
+    return (s_freq_view_min <= 0.0f || s_freq_view_max <= s_freq_view_min)
+           ? FREQ_ZOOM_MIN
+           : s_freq_view_min * powf(s_freq_view_max / s_freq_view_min, frac);
+}
+
+/* Bottom axis labels: frequency in the FFT-based modes, elapsed time in
+ * scope mode (the window is SCREEN_W × samples-per-pixel wide). */
+static void update_axis_ticks(void)
+{
+    if (!s_screen) return;
+
+    bool scope = (s_mode == DISPLAY_MODE_SCOPE);
+    float window_ms = 0.0f;
+    if (scope) {
+        uint32_t sr = (s_sample_rate > 0) ? s_sample_rate : 48000;
+        window_ms = (float)SCREEN_W * s_scope_spp * 1000.0f / (float)sr;
+    }
+
+    for (int i = 0; i < FREQ_TICK_COUNT; i++) {
+        if (s_freq_ticks[i] == NULL) continue;
+
+        float frac = (float)i / (float)(FREQ_TICK_COUNT - 1);
+        char txt[16];
+        if (scope) {
+            float t = frac * window_ms;
+            if (t >= 100.0f) snprintf(txt, sizeof(txt), "%.0fms", t);
+            else             snprintf(txt, sizeof(txt), "%.1fms", t);
+        } else {
+            float freq = x_to_freq_frac(frac);
+            if (freq >= 1000.0f) {
+                if (freq >= 10000.0f) snprintf(txt, sizeof(txt), "%.0fkHz", freq / 1000.0f);
+                else                  snprintf(txt, sizeof(txt), "%.1fkHz", freq / 1000.0f);
+            } else {
+                snprintf(txt, sizeof(txt), "%.0fHz", freq);
+            }
+        }
+        lv_label_set_text(s_freq_ticks[i], txt);
+        lv_obj_update_layout(s_freq_ticks[i]);
+
+        int32_t tick_x = (int32_t)(frac * (float)SCREEN_W);
+        int32_t lbl_w  = lv_obj_get_width(s_freq_ticks[i]);
+        int32_t x;
+        if (tick_x <= 0)                  x = 0;
+        else if (tick_x >= SCREEN_W - 1)  x = SCREEN_W - lbl_w;
+        else                              x = tick_x - lbl_w / 2;
+        if (x < 0) x = 0;
+        lv_obj_set_pos(s_freq_ticks[i], x, SCREEN_H - INFO_H);
+    }
+}
+
+/* SCOPE heads-up readout: which axis a pinch is driving plus the live
+ * time window and gain, so zoom feedback is explicit rather than only
+ * inferred from the trace. */
+static void update_scope_hud(void)
+{
+    if (s_lbl_scope_hud == NULL || s_mode != DISPLAY_MODE_SCOPE) return;
+
+    uint32_t sr = (s_sample_rate > 0) ? s_sample_rate : 48000;
+    float window_ms = (float)SCREEN_W * s_scope_spp * 1000.0f / (float)sr;
+    float gain = s_scope_gain_manual ? s_scope_gain : s_scope_gain_active;
+
+    const char *pinch = "";
+    if (s_zoom_active) {
+        if (s_zoom_axis == ZOOM_AXIS_FREQ)
+            pinch = LV_SYMBOL_LEFT " TIME " LV_SYMBOL_RIGHT "   ";
+        else if (s_zoom_axis == ZOOM_AXIS_DB)
+            pinch = LV_SYMBOL_UP " GAIN " LV_SYMBOL_DOWN "   ";
+    }
+
+    char buf[96];
+    snprintf(buf, sizeof(buf), "%s%.1f ms  (%.2f ms/div)  |  gain x%.1f%s",
+             pinch, window_ms, window_ms / 4.0f,
+             gain, s_scope_gain_manual ? "" : " auto");
+    lv_label_set_text(s_lbl_scope_hud, buf);
+}
+
+static void apply_zoom_axis(zoom_axis_t axis, float scale, lv_point_t center)
+{
+    if (scale <= 0.0f) return;
+
+    if (s_mode == DISPLAY_MODE_SCOPE) {
+        if (axis == ZOOM_AXIS_FREQ) {
+            /* horizontal pinch = time base; fingers apart magnifies
+             * (fewer samples per pixel = shorter visible window) */
+            s_scope_spp = clampf_local(s_zoom_base_spp / scale,
+                                       SCOPE_SPP_MIN, SCOPE_SPP_MAX);
+            update_axis_ticks();
+        } else if (axis == ZOOM_AXIS_DB) {
+            /* vertical pinch = amplitude gain; fingers apart amplifies */
+            s_scope_gain = clampf_local(s_zoom_base_gain * scale,
+                                        SCOPE_GAIN_MIN, SCOPE_GAIN_MAX);
+            s_scope_gain_manual = true;
+        }
+        update_scope_hud();
+        if (s_spectrum_obj) lv_obj_invalidate(s_spectrum_obj);
+        return;
+    }
+
+    if (axis == ZOOM_AXIS_FREQ) {
+        float base_min = s_zoom_base_freq_min;
+        float base_max = s_zoom_base_freq_max;
+        float base_log_span = logf(base_max / base_min);
+        float new_log_span  = clampf_local(base_log_span / scale, logf(1.25f), logf(FREQ_ZOOM_MAX / FREQ_ZOOM_MIN));
+
+        float frac = (float)center.x / (float)SCREEN_W;
+        frac = clampf_local(frac, 0.0f, 1.0f);
+        float focus_freq = base_min * powf(base_max / base_min, frac);
+        float new_min = focus_freq / powf(base_max / base_min, frac * (new_log_span / base_log_span));
+        float new_max = new_min * expf(new_log_span);
+
+        if (new_min < FREQ_ZOOM_MIN) {
+            new_min = FREQ_ZOOM_MIN;
+            new_max = new_min * expf(new_log_span);
+        }
+        if (new_max > FREQ_ZOOM_MAX) {
+            new_max = FREQ_ZOOM_MAX;
+            new_min = new_max / expf(new_log_span);
+        }
+        if (new_max <= new_min) {
+            new_min = FREQ_ZOOM_MIN;
+            new_max = FREQ_ZOOM_MAX;
+        }
+        s_freq_view_min = new_min;
+        s_freq_view_max = new_max;
+        update_axis_ticks();
+    } else if (axis == ZOOM_AXIS_DB) {
+        float base_span = s_zoom_base_db_max - DB_MIN;
+        float new_span   = clampf_local(base_span / scale, 20.0f, 120.0f);
+        s_db_view_max = DB_MIN + new_span;
+    }
+
+    if (s_spectrum_obj) lv_obj_invalidate(s_spectrum_obj);
+}
+
+static void spectrum_gesture_cb(lv_event_t *e)
+{
+    if (lv_event_get_code(e) != LV_EVENT_GESTURE) return;
+    if (s_mode == DISPLAY_MODE_VU) return;   /* VU has no zoomable axes */
+    if (lv_event_get_gesture_type(e) != LV_INDEV_GESTURE_PINCH) return;
+
+    lv_indev_gesture_state_t state = lv_event_get_gesture_state(e, LV_INDEV_GESTURE_PINCH);
+    lv_indev_t *indev = (lv_indev_t *)lv_event_get_param(e);
+    lv_indev_gesture_recognizer_t *recognizer = (indev == NULL)
+                                                ? NULL
+                                                : (lv_indev_gesture_recognizer_t *)indev->gesture_data[LV_INDEV_GESTURE_PINCH];
+    if (recognizer == NULL) return;
+
+    float scale = lv_event_get_pinch_scale(e);
+    lv_indev_get_gesture_center_point(recognizer, &s_zoom_center_pt);
+
+    if (state == LV_INDEV_GESTURE_STATE_RECOGNIZED) {
+        s_zoom_active = true;
+        lv_point_t primary_pt = {0, 0};
+        lv_indev_get_gesture_primary_point(recognizer, &primary_pt);
+        s_zoom_axis = (LV_ABS(primary_pt.x - s_zoom_center_pt.x) >= LV_ABS(primary_pt.y - s_zoom_center_pt.y))
+                      ? ZOOM_AXIS_FREQ : ZOOM_AXIS_DB;
+        s_zoom_base_freq_min = s_freq_view_min;
+        s_zoom_base_freq_max = s_freq_view_max;
+        s_zoom_base_db_max   = s_db_view_max;
+        s_zoom_base_spp      = s_scope_spp;
+        /* Seed manual gain from whatever the last frame actually used so
+         * switching from auto to manual doesn't jump. */
+        s_zoom_base_gain     = s_scope_gain_manual ? s_scope_gain
+                                                   : s_scope_gain_active;
+    }
+
+    if (state == LV_INDEV_GESTURE_STATE_ONGOING || state == LV_INDEV_GESTURE_STATE_RECOGNIZED) {
+        if (!s_zoom_active) return;
+        apply_zoom_axis(s_zoom_axis, scale, s_zoom_center_pt);
+    }
+
+    if (state == LV_INDEV_GESTURE_STATE_ENDED || state == LV_INDEV_GESTURE_STATE_CANCELED) {
+        s_zoom_active = false;
+        s_zoom_axis = ZOOM_AXIS_NONE;
+    }
+
+    /* keep the scope HUD's pinch-axis tag in sync with the gesture state */
+    update_scope_hud();
+}
 
 static inline float db_to_frac(float db)
 {
-    float f = (db - DB_MIN) / (s_db_max - DB_MIN);
+    float f = (db - DB_MIN) / (s_db_view_max - DB_MIN);
     if (f < 0.0f) f = 0.0f;
     if (f > 1.0f) f = 1.0f;
     return f;
@@ -141,9 +409,9 @@ static bool      s_frozen       = false;
 static bool      s_grid_enabled = true;
 static lv_obj_t *s_btn_stop_lbl;
 
-/* ── oscilloscope waveform ────────────────────────────────────── */
-#define WAVE_N 2048
-static int16_t s_wave[WAVE_N];
+/* ── oscilloscope waveform (PSRAM buffers, alloc'd in create()) ── */
+static int16_t *s_wave      = NULL;   /* ring of the last WAVE_N samples */
+static int16_t *s_wave_snap = NULL;   /* draw-side snapshot */
 static SemaphoreHandle_t s_wave_mutex;
 
 /* ── FPS counter ──────────────────────────────────────────────── */
@@ -151,20 +419,6 @@ static int64_t  s_fps_last_us   = 0;
 static uint32_t s_fps_count     = 0;
 static float    s_fps_display   = 0.0f;
 static char     s_dsp_info_base[72] = "";  /* base string set by set_dsp_info(), FPS appended live */
-
-/* ── LVGL objects ─────────────────────────────────────────────── */
-static lv_obj_t *s_screen;
-static lv_obj_t *s_spectrum_obj;
-static lv_obj_t *s_lbl_spl;
-static lv_obj_t *s_lbl_peak;
-static lv_obj_t *s_lbl_dsp_info;
-static lv_obj_t *s_lbl_ambient_status;
-static lv_obj_t *s_lbl_source_status;   /* "USB MIC" when the UAC1 mic is live */
-static lv_obj_t *s_btn_pk_lbl;         /* peak hold toggle button label */
-static lv_obj_t *s_btn_mx_lbl;         /* max hold toggle button label */
-static lv_obj_t *s_btn_rst;            /* reset max hold button */
-static lv_obj_t *s_lbl_vu_spl;         /* VU mode: big SPL readout */
-static lv_obj_t *s_lbl_vu_peak;        /* VU mode: big peak readout */
 
 /* ── helpers ──────────────────────────────────────────────────── */
 
@@ -178,10 +432,17 @@ static lv_color_t bar_color_for_db(float db)
 /* Logarithmic frequency → x pixel (0-based within width) */
 static int32_t freq_to_x(float freq, int32_t width)
 {
-    if (freq <= FREQ_MIN) return 0;
-    if (freq >= FREQ_MAX) return width - 1;
-    float ratio = log10f(freq / FREQ_MIN) / log10f(FREQ_MAX / FREQ_MIN);
+    if (freq <= s_freq_view_min) return 0;
+    if (freq >= s_freq_view_max) return width - 1;
+    float ratio = freq_x_frac(freq);
     return (int32_t)(ratio * (float)(width - 1));
+}
+
+static float x_to_freq(int32_t x, int32_t width)
+{
+    if (width <= 1) return s_freq_view_min;
+    float frac = (float)x / (float)(width - 1);
+    return x_to_freq_frac(frac);
 }
 
 /* Max-of-bins per log-spaced band. Caller must hold s_data_mutex. */
@@ -193,10 +454,16 @@ static void compute_bands(float *out, int n_bands)
         return;
     }
     float hz_per_bin = (float)s_sample_rate / (2.0f * (float)bin_count);
+    float min_f = s_freq_view_min;
+    float max_f = s_freq_view_max;
+    if (max_f <= min_f) {
+        min_f = FREQ_ZOOM_MIN;
+        max_f = FREQ_ZOOM_MAX;
+    }
 
     for (int i = 0; i < n_bands; i++) {
-        float f_lo = FREQ_MIN * powf(FREQ_MAX / FREQ_MIN, (float)i       / (float)n_bands);
-        float f_hi = FREQ_MIN * powf(FREQ_MAX / FREQ_MIN, (float)(i + 1) / (float)n_bands);
+        float f_lo = min_f * powf(max_f / min_f, (float)i       / (float)n_bands);
+        float f_hi = min_f * powf(max_f / min_f, (float)(i + 1) / (float)n_bands);
 
         int b_lo = (int)(f_lo / hz_per_bin);
         int b_hi = (int)(f_hi / hz_per_bin);
@@ -495,67 +762,128 @@ static void draw_mode_persist(lv_layer_t *layer, const lv_area_t *oa,
     }
 }
 
-/* SCOPE — raw waveform, free-running with rising zero-cross alignment */
+/* SCOPE — raw waveform with pinch-adjustable time base and gain.
+ * Horizontal pinch changes samples-per-pixel (visible window length),
+ * vertical pinch changes the amplitude gain. Each 2-px column is drawn
+ * as the min–max envelope of the samples it covers, so zoomed-out views
+ * keep their peaks instead of aliasing them away. */
 static void draw_mode_scope(lv_layer_t *layer, const lv_area_t *oa,
                             int32_t w, int32_t h)
 {
-    /* center reference line */
     int32_t mid = oa->y1 + h / 2;
     lv_draw_line_dsc_t ldsc;
     lv_draw_line_dsc_init(&ldsc);
     ldsc.color = lv_color_hex(s_pal->grid);
     ldsc.width = 1;
     ldsc.opa   = LV_OPA_70;
+
+    /* vertical time graticule (matches the bottom axis tick positions) */
+    if (s_grid_enabled) {
+        for (int i = 0; i < FREQ_TICK_COUNT; i++) {
+            int32_t x = oa->x1 + (int32_t)((float)i / (float)(FREQ_TICK_COUNT - 1)
+                                           * (float)(w - 1));
+            ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)oa->y1};
+            ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)oa->y2};
+            lv_draw_line(layer, &ldsc);
+        }
+    }
+
+    /* center reference line */
     ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)oa->x1, (lv_value_precise_t)mid};
     ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)oa->x2, (lv_value_precise_t)mid};
     lv_draw_line(layer, &ldsc);
 
-    if (s_wave_mutex == NULL) return;
+    if (s_wave_mutex == NULL || s_wave == NULL || s_wave_snap == NULL) return;
 
-    static int16_t wave[WAVE_N];   /* local copy so the mutex is held briefly */
-    if (xSemaphoreTake(s_wave_mutex, 0) != pdTRUE) return;
-    memcpy(wave, s_wave, sizeof(wave));
-    xSemaphoreGive(s_wave_mutex);
+    static bool wave_valid = false;
+    if (xSemaphoreTake(s_wave_mutex, 0) == pdTRUE) {
+        memcpy(s_wave_snap, s_wave, WAVE_N * sizeof(int16_t));
+        xSemaphoreGive(s_wave_mutex);
+        wave_valid = true;
+    }
+    if (!wave_valid) return;
+    const int16_t *wave = s_wave_snap;
 
-    /* rising zero-cross trigger in the first half for a steadier trace */
+    float spp    = clampf_local(s_scope_spp, SCOPE_SPP_MIN, SCOPE_SPP_MAX);
+    int   window = (int)((float)w * spp + 0.5f);
+    if (window < 2)      window = 2;
+    if (window > WAVE_N) window = WAVE_N;
+
+    /* Rising zero-cross trigger. Only search where a full window still
+     * fits behind the trigger point so the trace always spans the whole
+     * width; at maximum zoom-out there is no slack and it free-runs. */
     int start = 0;
-    for (int i = 1; i < WAVE_N / 2; i++) {
+    int search_end = WAVE_N - window;
+    for (int i = 1; i < search_end; i++) {
         if (wave[i - 1] < 0 && wave[i] >= 0) { start = i; break; }
     }
 
-    /* Auto-gain: a mic signal at typical levels (±100 counts of ±32768)
-     * would deflect less than one pixel — scale the window so the loudest
-     * sample reaches ~85% of half-height, capped at 64x so silence stays
-     * flat instead of amplifying noise into garbage. */
-    int32_t mxs = 0;
-    for (int i = start; i < start + w && i < WAVE_N; i++) {
-        int32_t v = wave[i] < 0 ? -wave[i] : wave[i];
-        if (v > mxs) mxs = v;
+    /* Gain: manual after a vertical pinch. Otherwise auto — a mic signal
+     * at typical levels (±100 counts of ±32768) would deflect less than
+     * one pixel, so scale the window's loudest sample to ~85% of
+     * half-height, capped at 64x so silence stays flat. */
+    float gain;
+    if (s_scope_gain_manual) {
+        gain = s_scope_gain;
+    } else {
+        int32_t mxs = 0;
+        for (int i = start; i < start + window; i++) {
+            int32_t v = wave[i] < 0 ? -wave[i] : wave[i];
+            if (v > mxs) mxs = v;
+        }
+        gain = 1.0f;
+        if (mxs > 0) {
+            gain = 27000.0f / (float)mxs;
+            if (gain > 64.0f) gain = 64.0f;
+            if (gain < 1.0f)  gain = 1.0f;
+        }
     }
-    float gain = 1.0f;
-    if (mxs > 0) {
-        gain = 27000.0f / (float)mxs;
-        if (gain > 64.0f) gain = 64.0f;
-        if (gain < 1.0f)  gain = 1.0f;
-    }
+    s_scope_gain_active = gain;
 
-    /* one sample per pixel, drawn as segments every 4 px */
     ldsc.color = lv_color_hex(s_pal->bar_mid);
     ldsc.width = 2;
     ldsc.opa   = LV_OPA_COVER;
     float y_scale = (float)h * 0.45f / 32768.0f * gain;
 
-    int32_t prev_x = oa->x1;
-    int32_t prev_y = mid - (int32_t)((float)wave[start] * y_scale);
-    for (int32_t x = 4; x < w; x += 4) {
-        int idx = start + x;
-        if (idx >= WAVE_N) break;
-        int32_t y = mid - (int32_t)((float)wave[idx] * y_scale);
-        ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)prev_x, (lv_value_precise_t)prev_y};
-        ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)(oa->x1 + x), (lv_value_precise_t)y};
+    /* Min–max envelope per 2-px column, bridged to the previous column
+     * so the trace stays visually continuous. */
+    const int32_t col = 2;
+    int32_t prev_top = 0, prev_bot = 0;
+    bool first = true;
+    for (int32_t x = 0; x < w; x += col) {
+        int i0 = start + (int)((float)x * spp);
+        int i1 = start + (int)((float)(x + col) * spp);
+        if (i0 >= WAVE_N) break;
+        if (i1 <= i0)     i1 = i0 + 1;
+        if (i1 > WAVE_N)  i1 = WAVE_N;
+
+        int32_t smin = 32767, smax = -32768;
+        for (int i = i0; i < i1; i++) {
+            if (wave[i] < smin) smin = wave[i];
+            if (wave[i] > smax) smax = wave[i];
+        }
+
+        /* larger sample → smaller y (screen y grows downward) */
+        int32_t top = mid - (int32_t)((float)smax * y_scale);
+        int32_t bot = mid - (int32_t)((float)smin * y_scale);
+        top = (int32_t)clampf_local((float)top, (float)oa->y1, (float)(oa->y2 - 1));
+        bot = (int32_t)clampf_local((float)bot, (float)oa->y1, (float)(oa->y2 - 1));
+
+        int32_t cur_top = top, cur_bot = bot;
+        if (!first) {
+            /* bridge against the previous column's envelope */
+            if (top > prev_bot) top = prev_bot;
+            if (bot < prev_top) bot = prev_top;
+        }
+        if (bot <= top) bot = top + 1;   /* zero-length lines don't render */
+
+        ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)(oa->x1 + x), (lv_value_precise_t)top};
+        ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)(oa->x1 + x), (lv_value_precise_t)bot};
         lv_draw_line(layer, &ldsc);
-        prev_x = oa->x1 + x;
-        prev_y = y;
+
+        prev_top = cur_top;
+        prev_bot = cur_bot;
+        first = false;
     }
 }
 
@@ -685,15 +1013,15 @@ static void spectrum_draw_cb(lv_event_t *e)
 
     if (band_mode && s_grid_enabled) {
         /* ── vertical frequency grid lines ── */
-        static const float gfreqs[] = {50, 100, 200, 500, 1000, 2000, 5000, 10000};
+        static const float tick_fracs[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
         lv_draw_line_dsc_t ldsc;
         lv_draw_line_dsc_init(&ldsc);
         ldsc.color = lv_color_hex(s_pal->grid);
         ldsc.width = 1;
         ldsc.opa   = LV_OPA_70;
 
-        for (int i = 0; i < (int)(sizeof(gfreqs) / sizeof(gfreqs[0])); i++) {
-            int32_t x = oa.x1 + freq_to_x(gfreqs[i], w);
+        for (int i = 0; i < (int)(sizeof(tick_fracs) / sizeof(tick_fracs[0])); i++) {
+            int32_t x = oa.x1 + (int32_t)(tick_fracs[i] * (float)(w - 1));
             ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)oa.y1};
             ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)oa.y2};
             lv_draw_line(layer, &ldsc);
@@ -715,7 +1043,7 @@ static void spectrum_draw_cb(lv_event_t *e)
         int32_t mid = oa.y1 + h / 2;
 
         for (int i = 0; i < (int)(sizeof(gdb) / sizeof(gdb[0])); i++) {
-            if (gdb[i] >= s_db_max || gdb[i] <= DB_MIN) continue;
+            if (gdb[i] >= s_db_view_max || gdb[i] <= DB_MIN) continue;
 
             char txt[12];
             snprintf(txt, sizeof(txt), "%.0f dB", gdb[i]);
@@ -817,12 +1145,18 @@ esp_err_t screen_spectrum_create(void)
     ESP_RETURN_ON_FALSE(s_mag_db != NULL, ESP_ERR_NO_MEM, TAG, "mag_db alloc failed");
     for (int i = 0; i < MAX_BINS; i++) s_mag_db[i] = DB_MIN;
 
+    s_wave = heap_caps_calloc(WAVE_N, sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    ESP_RETURN_ON_FALSE(s_wave != NULL, ESP_ERR_NO_MEM, TAG, "wave alloc failed");
+    s_wave_snap = heap_caps_calloc(WAVE_N, sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    ESP_RETURN_ON_FALSE(s_wave_snap != NULL, ESP_ERR_NO_MEM, TAG, "wave snapshot alloc failed");
+
     s_data_mutex = xSemaphoreCreateMutex();
     ESP_RETURN_ON_FALSE(s_data_mutex != NULL, ESP_ERR_NO_MEM, TAG, "mutex alloc failed");
     s_wave_mutex = xSemaphoreCreateMutex();
     ESP_RETURN_ON_FALSE(s_wave_mutex != NULL, ESP_ERR_NO_MEM, TAG, "wave mutex alloc failed");
 
     heat_lut_init();
+    reset_view_ranges();
 
     /* ── root screen ── */
     s_screen = lv_obj_create(NULL);
@@ -954,7 +1288,10 @@ esp_err_t screen_spectrum_create(void)
     lv_obj_set_style_border_width(s_spectrum_obj, 0, 0);
     lv_obj_set_style_radius(s_spectrum_obj, 0, 0);
     lv_obj_set_style_pad_all(s_spectrum_obj, 0, 0);
+    lv_obj_add_flag(s_spectrum_obj, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(s_spectrum_obj, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(s_spectrum_obj, spectrum_draw_cb, LV_EVENT_DRAW_MAIN, NULL);
+    lv_obj_add_event_cb(s_spectrum_obj, spectrum_gesture_cb, LV_EVENT_GESTURE, NULL);
 
     /* VU mode big readouts (children of spectrum area, hidden by default).
      * The needle gauge pivot sits at ~72% height; the big SPL number goes
@@ -972,6 +1309,14 @@ esp_err_t screen_spectrum_create(void)
     lv_obj_set_style_text_font(s_lbl_vu_peak, &lv_font_montserrat_24, 0);
     lv_obj_align(s_lbl_vu_peak, LV_ALIGN_BOTTOM_MID, 0, -88);
     lv_obj_add_flag(s_lbl_vu_peak, LV_OBJ_FLAG_HIDDEN);
+
+    /* SCOPE HUD — pinch axis + time window + gain, top-left of the trace */
+    s_lbl_scope_hud = lv_label_create(s_spectrum_obj);
+    lv_label_set_text(s_lbl_scope_hud, "");
+    lv_obj_set_style_text_color(s_lbl_scope_hud, lv_color_hex(s_pal->text), 0);
+    lv_obj_set_style_text_font(s_lbl_scope_hud, &lv_font_montserrat_16, 0);
+    lv_obj_align(s_lbl_scope_hud, LV_ALIGN_TOP_LEFT, 8, 8);
+    lv_obj_add_flag(s_lbl_scope_hud, LV_OBJ_FLAG_HIDDEN);
 
     /* Waterfall speed button — overlaid top-right of the spectrum area,
      * visible only in waterfall mode; cycles 1x → 2x → 4x rows/frame */
@@ -991,30 +1336,13 @@ esp_err_t screen_spectrum_create(void)
      * with hand-spaced text (the previous approach) assumed a monospace
      * font; Montserrat is proportional, so the spacing collapsed and all
      * five labels ended up bunched into the left third of the screen. */
-    static const struct { float freq; const char *text; } freq_ticks[] = {
-        {20.0f,    "20Hz"},
-        {100.0f,   "100Hz"},
-        {1000.0f,  "1kHz"},
-        {10000.0f, "10kHz"},
-        {20000.0f, "20kHz"},
-    };
-    for (size_t i = 0; i < sizeof(freq_ticks) / sizeof(freq_ticks[0]); i++) {
+    for (size_t i = 0; i < FREQ_TICK_COUNT; i++) {
         lv_obj_t *lbl = lv_label_create(s_screen);
-        lv_label_set_text(lbl, freq_ticks[i].text);
         lv_obj_set_style_text_color(lbl, lv_color_hex(s_pal->text), 0);
         lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
-        lv_obj_update_layout(lbl);   /* force LV_SIZE_CONTENT geometry now */
-
-        int32_t tick_x = freq_to_x(freq_ticks[i].freq, SCREEN_W);
-        int32_t lbl_w  = lv_obj_get_width(lbl);
-        int32_t x;
-        if (tick_x <= 0)                 x = 0;
-        else if (tick_x >= SCREEN_W - 1)  x = SCREEN_W - lbl_w;
-        else                              x = tick_x - lbl_w / 2;
-        if (x < 0) x = 0;
-
-        lv_obj_set_pos(lbl, x, SCREEN_H - INFO_H);
+        s_freq_ticks[i] = lbl;
     }
+    update_axis_ticks();
 
     ESP_LOGI(TAG, "spectrum screen created");
     return ESP_OK;
@@ -1030,6 +1358,7 @@ void screen_spectrum_update(const float *magnitude_db, uint16_t bin_count,
     if (bin_count > MAX_BINS) bin_count = MAX_BINS;
     memcpy(s_mag_db, magnitude_db, bin_count * sizeof(float));
     s_bin_count   = bin_count;
+    bool rate_changed = (s_sample_rate != sample_rate);
     s_sample_rate = sample_rate;
     s_spl_db      = spl_db;
     s_peak_db     = peak_db;
@@ -1039,6 +1368,10 @@ void screen_spectrum_update(const float *magnitude_db, uint16_t bin_count,
         waterfall_push_row();   /* needs s_mag_db under lock */
 
     xSemaphoreGive(s_data_mutex);
+
+    /* Scope time-axis labels depend on the sample rate */
+    if (rate_changed && s_mode == DISPLAY_MODE_SCOPE)
+        update_axis_ticks();
 
     /* FPS counter — update display label once per second */
     s_fps_count++;
@@ -1070,13 +1403,16 @@ void screen_spectrum_update(const float *magnitude_db, uint16_t bin_count,
         lv_label_set_text(s_lbl_vu_peak, buf);
     }
 
+    /* Scope HUD tracks the live auto-gain, so refresh it per frame */
+    if (s_mode == DISPLAY_MODE_SCOPE)
+        update_scope_hud();
+
     lv_obj_invalidate(s_spectrum_obj);
 }
 
 void screen_spectrum_push_waveform(const int16_t *samples, size_t count)
 {
-    if (s_wave_mutex == NULL || samples == NULL || count == 0) return;
-    if (s_mode != DISPLAY_MODE_SCOPE) return;   /* cheap early-out */
+    if (s_wave_mutex == NULL || s_wave == NULL || samples == NULL || count == 0) return;
     if (xSemaphoreTake(s_wave_mutex, 0) != pdTRUE) return;
 
     if (count >= WAVE_N) {
@@ -1095,6 +1431,8 @@ void screen_spectrum_set_mode(int mode)
         /* no-op, but keep canvas/labels consistent */
     }
     s_mode = (display_mode_t)mode;
+    reset_view_ranges();
+    update_axis_ticks();
 
     /* reset per-mode state so stale data doesn't flash */
     for (int i = 0; i < NUM_BARS; i++) {
@@ -1147,6 +1485,16 @@ void screen_spectrum_set_mode(int mode)
         }
     }
 
+    /* Scope HUD visible only in scope mode */
+    if (s_lbl_scope_hud) {
+        if (s_mode == DISPLAY_MODE_SCOPE) {
+            lv_obj_remove_flag(s_lbl_scope_hud, LV_OBJ_FLAG_HIDDEN);
+            update_scope_hud();
+        } else {
+            lv_obj_add_flag(s_lbl_scope_hud, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
     lv_obj_invalidate(s_spectrum_obj);
 }
 
@@ -1190,9 +1538,10 @@ void screen_spectrum_set_color_scheme(color_scheme_t scheme)
         if (child) lv_obj_set_style_text_color(child, lv_color_hex(s_pal->text), 0);
     }
 
-    /* VU readouts follow the theme text color */
-    if (s_lbl_vu_spl)  lv_obj_set_style_text_color(s_lbl_vu_spl,  lv_color_hex(s_pal->text), 0);
-    if (s_lbl_vu_peak) lv_obj_set_style_text_color(s_lbl_vu_peak, lv_color_hex(s_pal->text), 0);
+    /* VU readouts + scope HUD follow the theme text color */
+    if (s_lbl_vu_spl)     lv_obj_set_style_text_color(s_lbl_vu_spl,     lv_color_hex(s_pal->text), 0);
+    if (s_lbl_vu_peak)    lv_obj_set_style_text_color(s_lbl_vu_peak,    lv_color_hex(s_pal->text), 0);
+    if (s_lbl_scope_hud)  lv_obj_set_style_text_color(s_lbl_scope_hud,  lv_color_hex(s_pal->text), 0);
 
     /* Force a full redraw so grid and bar colors update immediately */
     lv_obj_invalidate(s_screen);
@@ -1248,7 +1597,7 @@ void screen_spectrum_set_db_range(int range_db)
     if (range_db > 120) range_db = 120;
     /* Bottom stays at DB_MIN; the top of the scale comes down so the
      * same signal fills more of the height. 120→0dB, 80→-40dB, 60→-60dB */
-    s_db_max = DB_MIN + (float)range_db;
+    s_db_view_max = DB_MIN + (float)range_db;
     if (s_spectrum_obj) lv_obj_invalidate(s_spectrum_obj);
 }
 

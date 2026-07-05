@@ -71,6 +71,13 @@ CONFIG_BSP_SD_FORMAT_ON_MOUNT_FAIL=y
 CONFIG_OTA_ALLOW_HTTP=n
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 
+# LVGL float coordinates + multi-touch pinch gesture recognition
+# (pinch zoom on the spectrum/scope screens; gesture recognition
+# requires LV_USE_FLOAT). These MUST be set here so the LVGL library
+# and application code compile with identical struct layouts.
+CONFIG_LV_USE_FLOAT=y
+CONFIG_LV_USE_GESTURE_RECOGNITION=y
+
 # LVGL fonts used by the spectrum analyzer UI
 CONFIG_LV_FONT_MONTSERRAT_12=y
 CONFIG_LV_FONT_MONTSERRAT_14=y
