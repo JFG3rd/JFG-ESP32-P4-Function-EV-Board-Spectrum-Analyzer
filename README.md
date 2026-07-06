@@ -78,15 +78,15 @@ Although it began as a personal engineering project, it is released as open sour
 
 | Spectrum | Waterfall |
 |----------|-----------|
-| ![](Docu/images/screenshots/bars-green.jpg) | ![](Docu/images/hero-waterfall.jpg) |
+| ![](Docu/images/Screenshots/bars-green.jpg) | ![](Docu/images/Screenshots/hero-waterfall.jpg) |
 
 | Oscilloscope | Line |
 |--------------|------|
-| ![](Docu/images/screenshots/scope-matrix.jpg) | ![](Docu/images/screenshots/line-high-contrast.jpg) |
+| ![](Docu/images/Screenshots/scope-matrix.jpg) | ![](Docu/images/Screenshots/line-high-contrast.jpg) |
 
 | Settings |
 |-----------|
-| ![](Docu/images/screenshots/settings.jpg) |
+| ![](Docu/images/Screenshots/settings.jpg) |
 
 ---
 
