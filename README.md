@@ -1,8 +1,9 @@
 # ESP32-P4 Spectrum Analyzer
 
 ![ESP32-P4 Spectrum Analyzer](Docu/images/hero-hospital-workbench-1600.jpg)
-(Docu/images/hero-waterfall.jpg)
-**A professional real-time audio measurement instrument for the ESP32-P4 Function EV Board.**
+![Waterfall Display Preview](Docu/images/hero-waterfall.jpg)
+
+> **A professional real-time audio measurement instrument for the ESP32-P4 Function EV Board.**
 
 ![ESP32-P4](https://img.shields.io/badge/ESP32-P4-blue)
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-supported-orange)
@@ -77,7 +78,7 @@ Although it began as a personal engineering project, it is released as open sour
 
 | Spectrum | Waterfall |
 |----------|-----------|
-| ![](Docu/images/screenshots/bars-green.jpg) | ![](Docu/images/screenshots/hero-waterfall.jpg) |
+| ![](Docu/images/screenshots/bars-green.jpg) | ![](Docu/images/hero-waterfall.jpg) |
 
 | Oscilloscope | Line |
 |--------------|------|
@@ -161,7 +162,7 @@ Insert the SD card and reboot.
 
 # Typical Applications
 
-The Spectrum Analyzer is suitable for loudspeaker development, audio amplifier analysis, AVR setup and testing, USB audio debugging, DSP development, educational demonstrations, embedded audio development and general frequency analysis.
+The Spectrum Analyzer is suitable for loudspeaker development, audio amplifier analysis, AVR setup and testing, USB audio debugging, DSP development, educational demonstrations, embedded audio de[...]
 
 ---
 
@@ -263,7 +264,7 @@ src/
 
 Operate two ESP32-P4 analyzers as a synchronized pair.
 
-Planned features include Primary / Secondary operating modes, stereo channel split, low latency PCM streaming, preset synchronization, automatic pairing, shared configuration and synchronized displays.
+Planned features include Primary / Secondary operating modes, stereo channel split, low latency PCM streaming, preset synchronization, automatic pairing, shared configuration and synchronized dis[...]
 
 ## Future Development
 
@@ -283,13 +284,13 @@ If the project proves useful, please consider giving it a ⭐ on GitHub to help 
 
 ## Project Background
 
-This project began as a personal engineering challenge while I was undergoing treatment for acute myeloid leukemia (AML). During an extended hospital stay I wanted to continue learning, solving problems, and designing embedded systems.
+This project began as a personal engineering challenge while I was undergoing treatment for acute myeloid leukemia (AML). During an extended hospital stay I wanted to continue learning, solving p[...]
 
 Engineering has always been one of the ways I make sense of complex problems, and this project became an opportunity to keep learning while facing a very different kind of challenge.
 
-What started as an exploration of the ESP32-P4 and real-time DSP gradually evolved into a much more capable audio measurement instrument. Every new feature was added with the same goal in mind: to build something genuinely useful rather than simply demonstrate a particular technology.
+What started as an exploration of the ESP32-P4 and real-time DSP gradually evolved into a much more capable audio measurement instrument. Every new feature was added with the same goal in mind: t[...]
 
-I am releasing the project as open source in the hope that other engineers, students, makers, and audio enthusiasts will find it useful, learn from it, and perhaps extend it in directions I never imagined.
+I am releasing the project as open source in the hope that other engineers, students, makers, and audio enthusiasts will find it useful, learn from it, and perhaps extend it in directions I never[...]
 
 ---
 
