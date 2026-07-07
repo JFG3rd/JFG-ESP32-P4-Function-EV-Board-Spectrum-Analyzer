@@ -6,6 +6,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="/style.css">
     <script>
+        function applyTheme(dark) {
+            document.body.classList.toggle("dark-mode", dark);
+            document.documentElement.style.colorScheme = dark ? "dark" : "light";
+            var b = document.getElementById("themeToggle");
+            if (b) b.textContent = dark ? "☀️ Light Mode" : "🌙 Dark Mode";
+        }
+        function toggleTheme() {
+            var dark = !document.body.classList.contains("dark-mode");
+            try { localStorage.setItem("theme", dark ? "dark" : "light"); } catch (e) {}
+            applyTheme(dark);
+        }
+        (function () {
+            var saved = null;
+            try { saved = localStorage.getItem("theme"); } catch (e) {}
+            var dark = saved ? (saved === "dark")
+                : (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+            document.addEventListener("DOMContentLoaded", function () { applyTheme(dark); });
+        })();
+
         const statusElId = "wifiStatusMsg";
         function setStatus(message, isError = false) {
             const el = document.getElementById(statusElId);
@@ -129,6 +148,7 @@
     </script>
 </head>
 <body>
+    <button class="button theme-toggle" id="themeToggle" onclick="toggleTheme()" title="Toggle dark / light mode">🌙 Dark Mode</button>
     <div class="wifi-setup-container">
         <h1>🎵 Spectrum Analyzer Wi-Fi Setup</h1>
         <p>Connect the analyzer to your local WiFi network</p>
