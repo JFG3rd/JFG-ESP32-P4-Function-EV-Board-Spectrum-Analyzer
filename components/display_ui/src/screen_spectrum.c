@@ -149,6 +149,7 @@ static const char *const g_mode_names[] = {
     "Bars", "Line", "1/3 Octave", "Persistence",
     "Waterfall", "Scope", "VU Meter", "Mirror",
 };
+static lv_obj_t *s_btn_grid_lbl;       /* grid toggle button label */
 static lv_obj_t *s_btn_pk_lbl;         /* peak hold toggle button label */
 static lv_obj_t *s_btn_mx_lbl;         /* max hold toggle button label */
 static lv_obj_t *s_btn_rst;            /* reset max hold button */
@@ -509,18 +510,6 @@ static inline uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
     return (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
 }
 
-/* Alpha-blend two RGB565 colors in the packed domain; `alpha` is fg's
- * weight (0…256). Used to lay faint gridlines over the waterfall heat
- * without fully overwriting the energy underneath. */
-static inline uint16_t blend565(uint16_t bg, uint16_t fg, uint32_t alpha)
-{
-    uint32_t ia = 256 - alpha;
-    uint32_t r = (((fg >> 11) & 0x1F) * alpha + ((bg >> 11) & 0x1F) * ia) >> 8;
-    uint32_t g = (((fg >>  5) & 0x3F) * alpha + ((bg >>  5) & 0x3F) * ia) >> 8;
-    uint32_t b = (( fg        & 0x1F) * alpha + ( bg        & 0x1F) * ia) >> 8;
-    return (uint16_t)((r << 11) | (g << 5) | b);
-}
-
 /* Classic heatmap: black → blue → cyan → green → yellow → red → white */
 static void heat_lut_init(void)
 {
@@ -595,7 +584,10 @@ static void grid_btn_cb(lv_event_t *e)
 {
     (void)e;
     s_grid_enabled = !s_grid_enabled;
+    if (s_btn_grid_lbl)
+        lv_label_set_text(s_btn_grid_lbl, s_grid_enabled ? "GRD " LV_SYMBOL_OK : "GRD");
     if (s_spectrum_obj) lv_obj_invalidate(s_spectrum_obj);
+    if (s_canvas)       lv_obj_invalidate(s_canvas);   /* waterfall grid overlay */
 }
 
 static void wf_speed_btn_cb(lv_event_t *e)
@@ -1031,9 +1023,62 @@ static void draw_mode_vu(lv_layer_t *layer, const lv_area_t *oa,
 }
 
 /* dB levels drawn as horizontal grid lines + left-edge legend in band
- * modes. Shared between the grid-line pass (behind the bars) and the
- * legend-text pass (on top of them). */
+ * modes. Shared between the grid-line pass and the legend-text pass. */
 static const float g_grid_db[] = {-20, -40, -60, -80, -100};
+
+/* Frequency/dB graticule for band modes. Drawn ON TOP of the bars (in a
+ * visible light color) so the lines stay visible no matter how tall the
+ * bars are — behind the bars they were hidden and barely contrasted. */
+static void draw_grid_lines(lv_layer_t *layer, const lv_area_t *oa,
+                            int32_t w, int32_t h)
+{
+    lv_draw_line_dsc_t ldsc;
+    lv_draw_line_dsc_init(&ldsc);
+    ldsc.color = lv_color_hex(s_pal->text);
+    ldsc.width = 1;
+    ldsc.opa   = LV_OPA_50;
+
+    /* ── vertical frequency lines ── */
+    static const float tick_fracs[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+    for (int i = 0; i < (int)(sizeof(tick_fracs) / sizeof(tick_fracs[0])); i++) {
+        int32_t x = oa->x1 + (int32_t)(tick_fracs[i] * (float)(w - 1));
+        ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)oa->y1};
+        ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)oa->y2};
+        lv_draw_line(layer, &ldsc);
+    }
+
+    /* ── horizontal dB lines ──
+     * In mirror mode the bars grow from the vertical center outward, so
+     * each dB level maps to a symmetric PAIR of lines around the center. */
+    bool mirror = (s_mode == DISPLAY_MODE_MIRROR);
+    int32_t mid = oa->y1 + h / 2;
+
+    for (int i = 0; i < (int)(sizeof(g_grid_db) / sizeof(g_grid_db[0])); i++) {
+        if (g_grid_db[i] >= s_db_view_max || g_grid_db[i] <= DB_MIN) continue;
+
+        if (mirror) {
+            int32_t off = (int32_t)(db_to_frac(g_grid_db[i]) * (float)h) / 2;
+            int32_t ys[2] = { mid - off, mid + off };
+            for (int k = 0; k < 2; k++) {
+                ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)oa->x1, (lv_value_precise_t)ys[k]};
+                ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)oa->x2, (lv_value_precise_t)ys[k]};
+                lv_draw_line(layer, &ldsc);
+            }
+        } else {
+            int32_t y = oa->y2 - (int32_t)(db_to_frac(g_grid_db[i]) * (float)h);
+            ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)oa->x1, (lv_value_precise_t)y};
+            ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)oa->x2, (lv_value_precise_t)y};
+            lv_draw_line(layer, &ldsc);
+        }
+    }
+
+    /* mirror centerline for reference */
+    if (mirror) {
+        ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)oa->x1, (lv_value_precise_t)mid};
+        ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)oa->x2, (lv_value_precise_t)mid};
+        lv_draw_line(layer, &ldsc);
+    }
+}
 
 /* dB text legend for band modes. Drawn AFTER the bars so the leftmost
  * bars can't paint over it, with a faint background chip so the text
@@ -1106,58 +1151,6 @@ static void spectrum_draw_cb(lv_event_t *e)
                       s_mode == DISPLAY_MODE_RTA  || s_mode == DISPLAY_MODE_PERSIST ||
                       s_mode == DISPLAY_MODE_MIRROR);
 
-    if (band_mode && s_grid_enabled) {
-        /* ── vertical frequency grid lines ── */
-        static const float tick_fracs[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
-        lv_draw_line_dsc_t ldsc;
-        lv_draw_line_dsc_init(&ldsc);
-        ldsc.color = lv_color_hex(s_pal->grid);
-        ldsc.width = 1;
-        ldsc.opa   = LV_OPA_70;
-
-        for (int i = 0; i < (int)(sizeof(tick_fracs) / sizeof(tick_fracs[0])); i++) {
-            int32_t x = oa.x1 + (int32_t)(tick_fracs[i] * (float)(w - 1));
-            ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)oa.y1};
-            ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)oa.y2};
-            lv_draw_line(layer, &ldsc);
-        }
-
-        /* ── horizontal dB grid lines ──
-         * In mirror mode the bars grow from the vertical center outward,
-         * so each dB level maps to a symmetric PAIR of lines around the
-         * centerline instead of one line measured from the bottom. The dB
-         * text legend is drawn later (draw_db_legend), on TOP of the bars,
-         * so the leftmost bars don't paint over it. */
-        bool mirror = (s_mode == DISPLAY_MODE_MIRROR);
-        int32_t mid = oa.y1 + h / 2;
-
-        for (int i = 0; i < (int)(sizeof(g_grid_db) / sizeof(g_grid_db[0])); i++) {
-            if (g_grid_db[i] >= s_db_view_max || g_grid_db[i] <= DB_MIN) continue;
-
-            if (mirror) {
-                int32_t off = (int32_t)(db_to_frac(g_grid_db[i]) * (float)h) / 2;
-                int32_t ys[2] = { mid - off, mid + off };
-                for (int k = 0; k < 2; k++) {
-                    ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)oa.x1, (lv_value_precise_t)ys[k]};
-                    ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)oa.x2, (lv_value_precise_t)ys[k]};
-                    lv_draw_line(layer, &ldsc);
-                }
-            } else {
-                int32_t y = oa.y2 - (int32_t)(db_to_frac(g_grid_db[i]) * (float)h);
-                ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)oa.x1, (lv_value_precise_t)y};
-                ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)oa.x2, (lv_value_precise_t)y};
-                lv_draw_line(layer, &ldsc);
-            }
-        }
-
-        /* mirror centerline for reference */
-        if (mirror) {
-            ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)oa.x1, (lv_value_precise_t)mid};
-            ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)oa.x2, (lv_value_precise_t)mid};
-            lv_draw_line(layer, &ldsc);
-        }
-    }
-
     if (s_mode == DISPLAY_MODE_WATERFALL) return;  /* canvas child renders */
 
     if (s_mode == DISPLAY_MODE_SCOPE) {
@@ -1169,22 +1162,54 @@ static void spectrum_draw_cb(lv_event_t *e)
         return;
     }
 
-    if (!s_data_valid) return;
-    if (xSemaphoreTake(s_data_mutex, 0) != pdTRUE) return;
-
-    switch (s_mode) {
-    case DISPLAY_MODE_LINE:    draw_mode_line(layer, &oa, w, h);                    break;
-    case DISPLAY_MODE_RTA:     draw_mode_bars(layer, &oa, w, h, RTA_BANDS, false);  break;
-    case DISPLAY_MODE_PERSIST: draw_mode_persist(layer, &oa, w, h);                 break;
-    case DISPLAY_MODE_MIRROR:  draw_mode_bars(layer, &oa, w, h, NUM_BARS, true);    break;
-    case DISPLAY_MODE_BARS:
-    default:                   draw_mode_bars(layer, &oa, w, h, NUM_BARS, false);   break;
+    /* Draw the bars first (if data is ready), then lay the graticule and
+     * dB legend ON TOP so the grid lines and labels are always visible —
+     * behind the bars the vertical lines were hidden by tall bars. */
+    if (s_data_valid && xSemaphoreTake(s_data_mutex, 0) == pdTRUE) {
+        switch (s_mode) {
+        case DISPLAY_MODE_LINE:    draw_mode_line(layer, &oa, w, h);                    break;
+        case DISPLAY_MODE_RTA:     draw_mode_bars(layer, &oa, w, h, RTA_BANDS, false);  break;
+        case DISPLAY_MODE_PERSIST: draw_mode_persist(layer, &oa, w, h);                 break;
+        case DISPLAY_MODE_MIRROR:  draw_mode_bars(layer, &oa, w, h, NUM_BARS, true);    break;
+        case DISPLAY_MODE_BARS:
+        default:                   draw_mode_bars(layer, &oa, w, h, NUM_BARS, false);   break;
+        }
+        xSemaphoreGive(s_data_mutex);
     }
 
-    xSemaphoreGive(s_data_mutex);
+    if (band_mode && s_grid_enabled) {
+        draw_grid_lines(layer, &oa, w, h);
+        draw_db_legend(layer, &oa, h);
+    }
+}
 
-    /* dB legend last, so the bars can't paint over it (see draw_db_legend) */
-    if (band_mode && s_grid_enabled) draw_db_legend(layer, &oa, h);
+/* Vertical frequency gridlines for the waterfall, drawn live ON TOP of
+ * the heatmap canvas (DRAW_POST) rather than baked into the buffer — so
+ * the GRD toggle takes effect immediately and no heat data is lost. The
+ * ticks match the band-mode frequency grid. */
+static void waterfall_grid_cb(lv_event_t *e)
+{
+    if (!s_grid_enabled) return;
+
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_obj_t   *obj   = lv_event_get_target(e);
+    lv_area_t   a;
+    lv_obj_get_coords(obj, &a);
+    int32_t w = lv_area_get_width(&a);
+
+    lv_draw_line_dsc_t ldsc;
+    lv_draw_line_dsc_init(&ldsc);
+    ldsc.color = lv_color_hex(s_pal->text);
+    ldsc.width = 1;
+    ldsc.opa   = LV_OPA_50;
+
+    static const float tick_fracs[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
+    for (int i = 0; i < (int)(sizeof(tick_fracs) / sizeof(tick_fracs[0])); i++) {
+        int32_t x = a.x1 + (int32_t)(tick_fracs[i] * (float)(w - 1));
+        ldsc.p1 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)a.y1};
+        ldsc.p2 = (lv_point_precise_t){(lv_value_precise_t)x, (lv_value_precise_t)a.y2};
+        lv_draw_line(layer, &ldsc);
+    }
 }
 
 /* ── waterfall row update (called from update(), LVGL ctx) ────── */
@@ -1204,28 +1229,15 @@ static void waterfall_push_row(void)
     memmove(s_wf_buf, s_wf_buf + (size_t)rows * SCREEN_W,
             (size_t)(SPECTRUM_H - rows) * SCREEN_W * sizeof(uint16_t));
 
-    /* render the newest line once, then replicate it into the N rows */
+    /* render the newest line once, then replicate it into the N rows.
+     * Vertical frequency gridlines are NOT baked in here — they're drawn
+     * live over the canvas by waterfall_grid_cb so the GRD toggle is
+     * instant and the lines never overwrite heat data. */
     uint16_t *row0 = s_wf_buf + (size_t)(SPECTRUM_H - rows) * SCREEN_W;
     for (int32_t x = 0; x < SCREEN_W; x++) {
         int band = (int)((int64_t)x * NUM_BARS / SCREEN_W);
         int v    = (int)(db_to_frac(levels[band]) * 255.0f);
         row0[x]  = s_heat_lut[v & 0xFF];
-    }
-
-    /* Faint vertical frequency gridlines, matching the band-mode ticks.
-     * The opaque canvas covers the parent's DRAW_MAIN grid, so bake them
-     * into the newest row: blended once here, each line then scrolls up
-     * as a continuous full-height guide. Toggling GRD off simply stops
-     * adding them and they scroll away within one screen height. */
-    if (s_grid_enabled) {
-        uint16_t gcol = rgb565((uint8_t)(s_pal->grid >> 16),
-                               (uint8_t)(s_pal->grid >>  8),
-                               (uint8_t)(s_pal->grid));
-        static const float tick_fracs[] = {0.0f, 0.25f, 0.5f, 0.75f, 1.0f};
-        for (int i = 0; i < (int)(sizeof(tick_fracs) / sizeof(tick_fracs[0])); i++) {
-            int32_t x = (int32_t)(tick_fracs[i] * (float)(SCREEN_W - 1));
-            row0[x] = blend565(row0[x], gcol, 128);   /* ~50% */
-        }
     }
 
     for (int r = 1; r < rows; r++)
@@ -1296,10 +1308,10 @@ esp_err_t screen_spectrum_create(void)
     lv_obj_set_size(btn_grid, 56, 30);
     lv_obj_align(btn_grid, LV_ALIGN_TOP_RIGHT, -312, 3);
     lv_obj_add_event_cb(btn_grid, grid_btn_cb, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *btn_grid_lbl = lv_label_create(btn_grid);
-    lv_label_set_text(btn_grid_lbl, "GRD");
-    lv_obj_set_style_text_font(btn_grid_lbl, &lv_font_montserrat_14, 0);
-    lv_obj_center(btn_grid_lbl);
+    s_btn_grid_lbl = lv_label_create(btn_grid);
+    lv_label_set_text(s_btn_grid_lbl, s_grid_enabled ? "GRD " LV_SYMBOL_OK : "GRD");
+    lv_obj_set_style_text_font(s_btn_grid_lbl, &lv_font_montserrat_14, 0);
+    lv_obj_center(s_btn_grid_lbl);
 
     /* STOP/PLAY — freezes the display on the current frame */
     lv_obj_t *btn_stop = lv_button_create(status);
@@ -1584,6 +1596,8 @@ void screen_spectrum_set_mode(int mode)
             lv_canvas_set_buffer(s_canvas, s_wf_buf, SCREEN_W, SPECTRUM_H,
                                  LV_COLOR_FORMAT_RGB565);
             lv_obj_set_pos(s_canvas, 0, 0);
+            /* frequency grid drawn over the heatmap, toggled by GRD */
+            lv_obj_add_event_cb(s_canvas, waterfall_grid_cb, LV_EVENT_DRAW_POST, NULL);
             /* speed button must stay clickable above the canvas */
             if (s_btn_wf_speed) lv_obj_move_foreground(s_btn_wf_speed);
         }
