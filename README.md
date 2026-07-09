@@ -1,9 +1,10 @@
-# ESP32-P4 Spectrum Analyzer
+# SpectraLab-P4
+### Professional real-time audio spectrum analyzer for the ESP32-P4 Function EV Board
 
-![ESP32-P4 Spectrum Analyzer](Docu/images/hero-hospital-workbench-1600.jpg)
+![SpectraLab-P4](Docu/images/hero-hospital-workbench-1600.jpg)
 ![Waterfall Display Preview](Docu/images/Screenshots/hero-waterfall.jpg)
 
-> **A professional real-time audio measurement instrument for the ESP32-P4 Function EV Board.**
+> **SpectraLab-P4 — a professional real-time audio measurement instrument for the ESP32-P4 Function EV Board.**
 
 ![ESP32-P4](https://img.shields.io/badge/ESP32-P4-blue)
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-supported-orange)
@@ -20,7 +21,7 @@
 The animation below was generated from the actual hardware demonstration video.
 
 <p align="center">
-<img src="Docu/images/demo-readme.gif" alt="ESP32-P4 Spectrum Analyzer running on hardware" width="900">
+<img src="Docu/images/demo-readme.gif" alt="SpectraLab-P4 running on hardware" width="900">
 </p>
 
 A compressed MP4 version is also included here:
@@ -93,7 +94,7 @@ Features include:
 | [Display Modes](#display-modes) | Supported on-device analyzer views |
 | [Embedded Web Interface](#-embedded-web-interface) | Browser dashboard, Wi-Fi setup and calibration upload |
 | [Roadmap](#roadmap) | Planned future enhancements |
-| [Release Notes](https://github.com/JFG3rd/JFG-ESP32-P4-Function-EV-Board-Spectrum-Analyzer/releases) | GitHub releases |
+| [Release Notes](https://github.com/JFG3rd/SpectraLab-P4/releases) | GitHub releases |
 | [Changelog](CHANGELOG.md) | Version history, once `CHANGELOG.md` is added |
 
 ---
@@ -206,7 +207,7 @@ Every feature is evaluated against one goal:
 ## Clone
 
 ```bash
-git clone https://github.com/JFG3rd/JFG-ESP32-P4-Function-EV-Board-Spectrum-Analyzer.git
+git clone https://github.com/JFG3rd/SpectraLab-P4.git
 ```
 
 ## Build with PlatformIO
@@ -229,7 +230,7 @@ Insert the SD card and reboot.
 
 # Typical Applications
 
-The Spectrum Analyzer is suitable for loudspeaker development, audio amplifier analysis, AVR setup and testing, USB audio debugging, DSP development, educational demonstrations, embedded audio de[...]
+SpectraLab-P4 is suitable for loudspeaker development, audio amplifier analysis, AVR setup and testing, USB audio debugging, DSP development, educational demonstrations, embedded audio de[...]
 
 ---
 

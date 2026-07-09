@@ -1,6 +1,6 @@
 # Roadmap
 
-This roadmap describes the intended direction of the ESP32-P4 Spectrum Analyzer. It is not a promise of delivery dates; it is a working plan for how the project may evolve.
+This roadmap describes the intended direction of SpectraLab-P4. It is not a promise of delivery dates; it is a working plan for how the project may evolve.
 
 ---
 

@@ -1,6 +1,6 @@
-# Spectrum Analyzer User Guide
+# SpectraLab-P4 User Guide
 
-This is the operator-facing guide for the ESP32-P4 Spectrum Analyzer. It focuses
+This is the operator-facing guide for SpectraLab-P4. It focuses
 on how to use the current firmware, with extra detail on the newest user-visible
 functionality: USB mono policy selection, richer preset persistence, pinch zoom,
 the improved Scope mode, and the more robust web workflow.

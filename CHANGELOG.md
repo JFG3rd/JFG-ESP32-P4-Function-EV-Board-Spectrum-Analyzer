@@ -21,7 +21,7 @@
 
 ## [1.0.0] - 2026-07-07
 ### Added
-- Initial stable release of ESP32-P4 Function EV Board Spectrum Analyzer
+- Initial stable release of SpectraLab-P4
 - Embedded web interface for control/visualization
 
 ### Notes

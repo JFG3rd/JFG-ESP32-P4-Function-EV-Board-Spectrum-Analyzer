@@ -1,5 +1,5 @@
 
-# CLAUDE.md — ESP32-P4 Spectrum Analyzer
+# CLAUDE.md — SpectraLab-P4
 
 Real-time audio spectrum analyzer on the ESP32-P4 Function EV Board
 (1024×600 MIPI-DSI LCD, ES8311 I2S codec, USB UAC1 mic host, WiFi via
@@ -90,7 +90,7 @@ pio run -t erase        # full chip erase (needed after partition changes)
   state in `s_last_*` and persists via the single `save_current_settings()`
   helper — new settings need an `s_last_*` field AND a line in that helper.
 - Commit style: `feat:`/`fix:` + body explaining root cause; push to
-  https://github.com/JFG3rd/JFG-ESP32-P4-Function-EV-Board-Spectrum-Analyzer
+  https://github.com/JFG3rd/SpectraLab-P4
 
 ## Phase 2 status
 
