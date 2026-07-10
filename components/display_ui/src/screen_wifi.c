@@ -100,7 +100,7 @@ static void list_refresh(bool scanning)
 
     if (n <= 0) {
         lv_list_add_text(s_list, scanning ? "Scanning..."
-                                          : "No networks found — tap Rescan");
+                                          : "No networks found — tap Rescan, or use Manual");
         return;
     }
     for (int i = 0; i < n; i++) {
@@ -142,6 +142,7 @@ static void back_cb(lv_event_t *e)
 {
     if (lv_event_get_code(e) != LV_EVENT_CLICKED) return;
     stop_poll();
+    net_mgr_exit_provisioning();   /* resume auto-join across the known list */
     screen_settings_load();
 }
 
@@ -338,6 +339,9 @@ void screen_wifi_show(void)
     net_mgr_get_status(status, sizeof(status));
     lv_label_set_text(s_status, status);
 
+    /* Pause the auto-join loop so the STA is idle and scannable (otherwise
+     * a scan started mid-connect fails with ESP_ERR_WIFI_STATE). */
+    net_mgr_enter_provisioning();
     net_mgr_start_scan();
     list_refresh(true);
     start_poll();
