@@ -28,6 +28,11 @@
   frequency/dB graticule stays visible regardless of bar height.
 
 ### Fixed
+- Touch: GT911 init now probes both I2C addresses (0x5D and 0x14) with a
+  short retry instead of assuming 0x5D. On this board the touch INT pin is
+  not connected, so the controller's power-on I2C address can latch either
+  value; the old single-address path could silently disable the touchscreen
+  while the display kept working.
 - dB legend was painted over by the leftmost bars; it now renders on
   top of the spectrum with a background chip for legibility.
 
