@@ -10,9 +10,9 @@
 ![PlatformIO](https://img.shields.io/badge/PlatformIO-supported-orange)
 ![ESP-IDF](https://img.shields.io/badge/ESP--IDF-supported-green)
 ![License](https://img.shields.io/badge/License-Apache%202.0-blue)
-![Version](https://img.shields.io/badge/Release-v1.0.0-success)
+![Version](https://img.shields.io/badge/Release-v1.1.0-success)
 
-> **Status:** Stable Public Release – **v1.0.0**
+> **Status:** Stable Public Release – **v1.1.0**
 
 ---
 
@@ -192,7 +192,7 @@ Every feature is evaluated against one goal:
 | Automatic Gain Control | ✅ |
 | Wi-Fi Provisioning | ✅ |
 | Multiple Saved Wi-Fi Networks | ✅ |
-| Camera QR Wi-Fi Setup | 🚧 Planned for v1.x |
+| Camera QR Wi-Fi Setup | ✅ |
 | Distributed Stereo Analyzer | 🚧 Planned for v2.0 |
 
 ---
@@ -337,7 +337,7 @@ src/
 - ✅ Multiple remembered Wi-Fi networks with automatic reconnect to whichever known network is in range
 - ✅ Robust on-device Wi-Fi scanning and provisioning, with a "Show password" toggle
 - ✅ Per-device mDNS name (`spectralab-p4-xxxx.local`) so multiple units coexist on one network
-- 🚧 Camera QR-code Wi-Fi provisioning — point the on-board camera at a router's Wi-Fi QR code to auto-fill the SSID and password (planned)
+- ✅ Camera QR-code Wi-Fi provisioning — point the on-board camera at a router's Wi-Fi QR code to auto-fill SSID/password from the on-device Wi-Fi setup flow
 
 ## Version 2.0 — Distributed Stereo Analyzer
 

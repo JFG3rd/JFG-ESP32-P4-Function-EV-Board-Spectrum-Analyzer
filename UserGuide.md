@@ -1,9 +1,9 @@
 # SpectraLab-P4 User Guide
 
-This is the operator-facing guide for SpectraLab-P4. It focuses
+This is the operator-facing guide for SpectraLab-P4 (v1.1.0). It focuses
 on how to use the current firmware, with extra detail on the newest user-visible
 functionality: USB mono policy selection, richer preset persistence, pinch zoom,
-the improved Scope mode, and the more robust web workflow.
+the improved Scope mode, the more robust web workflow, and camera QR Wi-Fi provisioning.
 
 ## Related Documents
 
@@ -24,6 +24,9 @@ The most important functional additions are:
 5. Spectrum views can be zoomed with pinch gestures.
 6. Scope mode now has pinch-controlled time base and gain, plus a live HUD.
 7. The web server is more stable and now rate-limits repeated write requests.
+8. Wi-Fi setup now supports camera-based QR-code provisioning from the on-device UI.
+9. QR camera bring-up now applies automatic image tuning (auto white balance / auto gain / auto exposure, with brightness/contrast control requests).
+10. Touch polling is suspended while QR camera scanning is active to avoid I2C bus contention.
 
 If you only remember one thing: the analyzer now preserves more of its real
 runtime state, and the display is much more interactive.

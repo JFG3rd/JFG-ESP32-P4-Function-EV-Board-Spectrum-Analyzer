@@ -1,5 +1,9 @@
 ## [Unreleased]
 ### Added
+- (none yet)
+
+## [1.1.0] - 2026-07-11
+### Added
 - Wi-Fi: remember multiple networks (up to 8, most-recently-used) with
   automatic reconnect to whichever known network is in range; migrates the
   previous single-credential storage on first boot.
@@ -22,6 +26,11 @@
 - Display-mode title shown in the spectrum status bar (top-right).
 - Vertical frequency grid overlay on the waterfall, toggled by `GRD`.
 - `GRD` button now shows a check mark when the grid is on.
+- On-device camera QR Wi-Fi provisioning flow:
+  - `Scan QR` path in Wi-Fi setup UI
+  - camera-backed QR decode pipeline (`qr_scan` component)
+  - live camera preview on the scan screen
+  - decoded SSID/password routed into existing password/save flow
 
 ### Changed
 - Grid lines now draw on top of the bars in all band modes so the
@@ -35,6 +44,16 @@
   while the display kept working.
 - dB legend was painted over by the leftmost bars; it now renders on
   top of the spectrum with a background chip for legibility.
+- Build reliability: fixed clean-build race around generated `esp_ipa`
+  sources by adding deterministic pre-generation.
+- QR/camera runtime stability:
+  - increased scanner task stack headroom
+  - safer camera format negotiation + fallback handling
+  - camera auto-adjust controls (auto white balance / auto gain / auto exposure,
+    plus brightness/contrast control requests)
+- Touch behavior during active camera scan:
+  - suppress GT911 polling while QR scan is running to avoid I2C contention
+  - prevent repeated touch read-error storms while camera provisioning is active
 
 ## [1.0.0] - 2026-07-07
 ### Added
